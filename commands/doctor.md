@@ -59,7 +59,25 @@ Must resolve to a git repo. Also confirm `cycler.yaml` is found:
 node -e "import('${CLAUDE_PLUGIN_ROOT}/lib/yaml.mjs').then(m=>console.log(m.configPath()||'NONE'))"
 ```
 
-## 5. Which gate resolves
+## 5. The workflow is installed in the repo
+
+```bash
+ls -l "$REPO/.claude/workflows/task-orchestration.js"
+```
+
+Must exist. The `Workflow` tool refuses a script it cannot already read, so a plugin path does not
+work and this copy is what makes the escape hatch reachable. Missing it means a run told to use the
+full workflow has no way to comply — and the one time that happened, the run waived the guard.
+
+If it is missing, `/cycler:setup` step 4 installs it. Also compare it with the plugin's copy and say
+if they differ: a stale copy is a workflow that silently is not the one you upgraded.
+
+```bash
+diff -q "$REPO/.claude/workflows/task-orchestration.js" \
+        "${CLAUDE_PLUGIN_ROOT}/workflows/task-orchestration.js" && echo "in sync" || echo "DIFFERS"
+```
+
+## 6. Which gate resolves
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/harness/gate.sh" --fast 2>&1 >/dev/null | head -1
@@ -68,7 +86,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/harness/gate.sh" --fast 2>&1 >/dev/null | head -1
 Report the repo's own gate or cycler's default **by name**. A repo with real checks that is silently
 running the default gate is passing on less than the user thinks.
 
-## 6. The delegate trap
+## 7. The delegate trap
 
 Compare what is assigned to the agent against what is delegated to it:
 
