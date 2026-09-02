@@ -68,10 +68,12 @@ assertion — it would pass on a prompt that dropped the warning entirely.
 | # | Assertion | Test |
 |---|---|---|
 | 5.1 | Mechanical stages route to a cheap model | `test-followups.mjs` |
-| 5.2 | Verify, audit and refute are **not** downgraded | — untested |
+| 5.2 | Verify, audit and refute are **not** downgraded | `test-check-stages-not-downgraded.mjs` |
 
-5.2 is a correctness property, not a cost one — a downgraded refuter silently drops findings — and it
-is currently unasserted. It should be a test.
+5.2 is a correctness property, not a cost one: a downgraded refuter agrees more readily, and confirms
+findings it should have disproved. Both directions are asserted, and the test was verified by
+mutation — downgrading `refute`, `audit` or `verify` in `DEFAULT_MODELS` each turns it red. Its first
+version did **not**: it dispatched no refuter, so it inspected nothing about the stage it named.
 
 ## Follow-ups
 
@@ -97,7 +99,7 @@ Xcode schemes to every user for as long as it had users.
 
 ## Known gaps
 
-- 1.4, 5.2 and 6.4 are unasserted, and 5.2 and 6.4 are correctness properties rather than cosmetics.
+- 1.4 and 6.4 are unasserted, and 6.4 is a correctness property rather than a cosmetic one.
 - No test runs the workflow against a real repo; `sim.mjs` stubs the runtime, so every assertion above
   is about **what an agent is told**, not what it does. That is the right layer for prompt bugs and
   the wrong one for everything else.
