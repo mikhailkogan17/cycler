@@ -61,12 +61,9 @@ CHANGED=$( { git diff --name-only "$REF"...HEAD; git status --porcelain -uall | 
 # as a forbidden glob and reported DIRTY on the very files the contract allowed. Moving the paragraph
 # made the identical tree CLEAN. So the check punished the author for explaining themselves, which is
 # the opposite of what this harness wants: the fix is to read declarations, not sentences.
-section() {
-  sed -n "/^## *$1/,/^## /p" "$CONTRACT_PATH" \
-    | grep -E '^ *[-*] ' \
-    | grep -o '`[^`]*`' | tr -d '`' \
-    | sed 's/ *#.*//' | sed '/^$/d'
-}
+# shellcheck source=contract-section.sh
+. "$(dirname "${BASH_SOURCE[0]}")/contract-section.sh"
+section() { contract_section "$CONTRACT_PATH" "$1"; }
 ALLOWED=$(section "Allowed paths"); FORBIDDEN=$(section "Forbidden paths")
 EXPECTED_FILES=$(section "Files expected to change")
 

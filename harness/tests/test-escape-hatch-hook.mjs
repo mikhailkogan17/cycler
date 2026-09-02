@@ -118,4 +118,34 @@ check("outside a /task worktree the hook does not fire", () => {
   rmSync(d, { recursive: true, force: true });
 });
 
+// ---- prose inside a section is not a file declaration -----------------------------------------
+//
+// The hook's own comment claimed it counted "the same way audit.sh does". It did not: audit.sh
+// filters to BULLET lines (that fix was made for a contract whose Risks-style paragraph inside
+// Forbidden paths was read as forbidden globs), and this copy never got it. Two implementations of
+// one rule, one of them fixed.
+//
+// Real cost, on a real run: a contract listing 3 files was counted as 22, because the section's prose
+// mentions symbols in backticks. The run was blocked past a limit it was nowhere near, and waived its
+// own escape hatch to proceed — the safety mechanism disabled by its own false positive.
+check("backticked prose inside the section is not counted as a file", () => {
+  const d = fixture(
+    "## Files expected to change\n\n" +
+    "- `src/a.ts` — replaces `oldThing()` with `newThing()`, dropping `legacyFlag` and `otherFlag`\n" +
+    "- `src/b.ts` — same treatment for `helperOne`, `helperTwo`, `helperThree`, `helperFour`\n\n" +
+    "Note the `Foo` and `Bar` types stay, and `baz`, `qux`, `quux` are untouched.\n");
+  const r = run(d, join(d, "src/a.ts"));
+  assert(r.allowed, "a 2-file contract was blocked by counting its prose:\n" + r.msg);
+  rmSync(d, { recursive: true, force: true });
+});
+
+check("a genuinely oversized contract is still blocked", () => {
+  // The other direction: a fix that stopped counting anything would pass the case above.
+  const d = fixture(list(13));
+  const r = run(d, join(d, "src/f0.ts"));
+  assert(!r.allowed, "a 13-file contract was allowed inline");
+  assert(/13 files/.test(r.msg), "the count was wrong or unreported:\n" + r.msg);
+  rmSync(d, { recursive: true, force: true });
+});
+
 process.exit(failed ? 1 : 0);

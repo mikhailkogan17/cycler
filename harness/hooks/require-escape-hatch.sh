@@ -82,8 +82,11 @@ fi
 # written into the contract, which means it survives into the audit and the PR rather than vanishing.
 grep -qi '^ *\*\*Escape hatch\*\*: *\(waived\|not needed\)' "$CONTRACT" && exit 0
 
-# Count the contract's declared files the same way audit.sh does: the backticked path in each bullet.
-section() { sed -n "/^## *$1/,/^## /p" "$CONTRACT" | grep -o '`[^`]*`' | tr -d '`' | sed '/^$/d'; }
+# Count the contract's declared files the same way audit.sh does — literally the same code, sourced
+# from one file. This comment used to make that claim while the two implementations differed.
+# shellcheck source=../contract-section.sh
+. "$PLUGIN_ROOT/harness/contract-section.sh"
+section() { contract_section "$CONTRACT" "$1"; }
 FILES="$(section "Files expected to change")"
 [ -n "$FILES" ] || FILES="$(section "Allowed paths")"
 COUNT="$(printf '%s\n' "$FILES" | sed '/^$/d' | wc -l | tr -d ' ')"
