@@ -50,8 +50,7 @@ MSG
 fi
 
 # The marker is bound to the exact tree that passed. Any edit since then invalidates it.
-NOW="$( { git -C "$CWD" diff HEAD 2>/dev/null; git -C "$CWD" diff --cached 2>/dev/null; \
-          git -C "$CWD" ls-files --others --exclude-standard 2>/dev/null; } | shasum -a 256 | awk '{print $1}')"
+NOW="$(bash "$PLUGIN_ROOT/harness/tree-fingerprint.sh" "$CWD")"
 WAS="$(cat "$MARKER" 2>/dev/null | tr -d '[:space:]')"
 
 if [ "$NOW" = "$WAS" ]; then

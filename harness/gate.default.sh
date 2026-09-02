@@ -276,12 +276,9 @@ fi
 # ($PLUGIN_ROOT/harness/hooks/require-green-gate.sh) can tell "gate passed" from "gate passed, then
 # somebody edited". Editing after a green run and committing is how an unverified change reaches a
 # PR looking verified.
-tree_fingerprint() {
-  { git diff HEAD 2>/dev/null
-    git diff --cached 2>/dev/null
-    git ls-files --others --exclude-standard 2>/dev/null
-  } | shasum -a 256 | awk '{print $1}'
-}
+# Shared with require-green-gate.sh, deliberately: two implementations would drift, and a
+# fingerprint that disagrees with itself blocks every commit for no reason.
+tree_fingerprint() { bash "$PLUGIN_ROOT/harness/tree-fingerprint.sh" .; }
 
 if [ $FAILED -eq 0 ]; then
   if [ $RAN -gt 0 ]; then

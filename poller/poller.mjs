@@ -68,8 +68,8 @@ const MAX_PER_POLL = 50;
 // indistinguishable from a working one until something audits its choices.
 //
 // CYCLER_WORKFLOW still overrides everything, for a one-off or a bisect.
-const ROUTES = (Array.isArray(ycfg.routes?.byLabel) && cfg.routes.byLabel.length
-  ? cfg.routes.byLabel.map((r) => [String(r.label).toLowerCase(), r.workflow, r.why || 'configured route'])
+const ROUTES = (Array.isArray(ycfg.routes?.byLabel) && ycfg.routes.byLabel.length
+  ? ycfg.routes.byLabel.map((r) => [String(r.label).toLowerCase(), r.workflow, r.why || 'configured route'])
   : [['research', '/cycler:research', 'decision, not a diff — nothing to gate or audit']]);
 function workflowFor(issue) {
   if (process.env.CYCLER_WORKFLOW) return { workflow: WORKFLOW, why: 'CYCLER_WORKFLOW override' };
