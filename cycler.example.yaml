@@ -42,7 +42,7 @@ verify:
   #
   # `when` is the path prefix that makes the step apply, `run` is the command, `notes` is the prose an
   # agent needs in order not to get it wrong. Notes matter as much as the command: the case this
-  # replaced needed "there is no ApplygentTests scheme, it is a target" to avoid a run-killing typo.
+  # replaced needed "there is no such scheme, it is a test target" to avoid a run-killing typo.
   # steps:
   #   - when: apps/macOS/**
   #     run: cd apps/macOS && xcodegen generate && xcodebuild -scheme App -destination 'platform=macOS' test
