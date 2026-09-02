@@ -78,5 +78,7 @@ launchd:
   # drift. Use your own reverse-DNS if you prefer, e.g. dev.yourname.cycler.
   label: dev.cycler.linear
 
-linear:
-  mode: auto               # auto | cli | mcp — how the harness reads and writes issues
+# Note: the harness reads and writes Linear through the bundled `poller/lin`, not through an MCP
+# server. That is deliberate — an MCP server does not reliably connect in a dispatched session, and a
+# run that ends with "please file this manually" leaves the finding unfiled. There is no config key
+# for this; a key that does nothing is worse than no key.
