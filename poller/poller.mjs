@@ -55,7 +55,7 @@ const PATH_PREPEND = (ycfg.dispatch?.pathPrepend?.length
 // harness inline in one long-lived session on the same issue and contract: 1.68M subagent tokens and a
 // merged PR, versus 10.77M and nothing shipped. There is no /start command in this repo — dispatching
 // it sent the session a literal string with no skill behind it.
-const WORKFLOW = process.env.CYCLER_WORKFLOW || ycfg.routes?.default || '/task';
+const WORKFLOW = process.env.CYCLER_WORKFLOW || ycfg.routes?.default || '/cycler:task';
 const MAX_PER_POLL = 50;
 
 // Route by label, per harness/ROUTING.md. Until this existed the poller dispatched /task for
@@ -70,7 +70,7 @@ const MAX_PER_POLL = 50;
 // CYCLER_WORKFLOW still overrides everything, for a one-off or a bisect.
 const ROUTES = (Array.isArray(ycfg.routes?.byLabel) && cfg.routes.byLabel.length
   ? cfg.routes.byLabel.map((r) => [String(r.label).toLowerCase(), r.workflow, r.why || 'configured route'])
-  : [['research', '/research', 'decision, not a diff — nothing to gate or audit']]);
+  : [['research', '/cycler:research', 'decision, not a diff — nothing to gate or audit']]);
 function workflowFor(issue) {
   if (process.env.CYCLER_WORKFLOW) return { workflow: WORKFLOW, why: 'CYCLER_WORKFLOW override' };
   const labels = (issue.labels?.nodes || []).map((l) => String(l.name || '').toLowerCase());

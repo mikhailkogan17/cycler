@@ -12,13 +12,13 @@ repo:
   branchPrefix: claude/    # branches are <branchPrefix><ISSUE-KEY>
 
 routes:
-  default: /task           # the implement-and-gate workflow
+  default: /cycler:task           # the implement-and-gate workflow
   byLabel:
     # A lookup on a label a human already wrote — deliberately NOT a classifier. A model here would
     # infer, less reliably, something already recorded, and a router that returns the default for
     # everything is indistinguishable from a working one until something audits it.
     - label: research
-      workflow: /research
+      workflow: /cycler:research
       why: a decision, not a diff — nothing to gate or audit
 
 dispatch:

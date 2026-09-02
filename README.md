@@ -52,10 +52,10 @@ repo:
   base: main
   branchPrefix: claude/
 routes:
-  default: /task
+  default: /cycler:task
   byLabel:
     - label: research
-      workflow: /research
+      workflow: /cycler:research
 ```
 
 Secrets are not in this file. The Linear client id, secret and token live in `~/.cycler/`, so
