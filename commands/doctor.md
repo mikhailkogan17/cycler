@@ -20,18 +20,27 @@ like a network fault.** If `refresh_token` is missing, re-run `/cycler:setup`.
 ## 2. launchd label vs filename
 
 ```bash
-launchctl list | grep dev.cycler.linear
-/usr/libexec/PlistBuddy -c "Print :Label" ~/Library/LaunchAgents/dev.cycler.linear.plist
+LABEL="$(node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" launchd.label dev.cycler.linear)"
+PLIST=~/Library/LaunchAgents/"$LABEL".plist
 ```
 
-The printed `Label` must be `dev.cycler.linear`. `launchctl` addresses jobs by **label, not
-filename**; a mismatch fails with a 501 that reads like "not running".
+The plist is named after the label on purpose. `launchctl` addresses jobs by **label**, and a label
+that does not match what you loaded fails with a 501 that reads like "not running".
+
+```bash
+launchctl list | grep "$LABEL"
+/usr/libexec/PlistBuddy -c "Print :Label" "$PLIST"
+```
+
+The printed `Label` must equal `$LABEL`. `launchctl` addresses jobs by **label, not filename**; a
+mismatch fails with a 501 that reads like "not running". Report the configured label by name, so a
+user who changed `launchd.label` can see which job was actually checked.
 
 ## 3. Absolute binaries
 
 ```bash
-/usr/libexec/PlistBuddy -c "Print :ProgramArguments:0" ~/Library/LaunchAgents/dev.cycler.linear.plist
-/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:CLAUDE_BIN" ~/Library/LaunchAgents/dev.cycler.linear.plist
+/usr/libexec/PlistBuddy -c "Print :ProgramArguments:0" "$PLIST"
+/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:CLAUDE_BIN" "$PLIST"
 ```
 
 Both must be absolute paths that exist and are executable. launchd's PATH is

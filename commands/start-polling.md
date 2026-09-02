@@ -20,14 +20,24 @@ CLAUDE_BIN="$(command -v claude)"
 REPO="$(node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" repo.path "$PWD")"
 ```
 
-Write `~/Library/LaunchAgents/dev.cycler.linear.plist`:
+Resolve the label, then write the plist:
+
+```bash
+LABEL="$(node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" launchd.label dev.cycler.linear)"
+PLIST=~/Library/LaunchAgents/"$LABEL".plist
+```
+
+The plist is named after the label on purpose. `launchctl` addresses jobs by **label**, and a label
+that does not match what you loaded fails with a 501 that reads like "not running".
+
+Write `$PLIST`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>dev.cycler.linear</string>
+  <key>Label</key><string>LABEL</string>
   <key>ProgramArguments</key>
   <array>
     <string>NODE_BIN</string>
@@ -47,18 +57,18 @@ Write `~/Library/LaunchAgents/dev.cycler.linear.plist`:
 </plist>
 ```
 
-Substitute the real values for `NODE_BIN`, `CLAUDE_BIN`, `PLUGIN_ROOT`, `REPO` and `HOME`.
+Substitute the real values for `LABEL`, `NODE_BIN`, `CLAUDE_BIN`, `PLUGIN_ROOT`, `REPO` and `HOME`.
 
-**The `Label` is `dev.cycler.linear` and it is NOT the filename.** `launchctl` addresses jobs by
-label; a mismatch fails with a 501 that reads like "not running" and costs an hour.
+**The `Label` inside the plist must equal `$LABEL` exactly.** `launchctl` addresses jobs by label,
+not by filename; a mismatch fails with a 501 that reads like "not running" and costs an hour.
 
 ## Load it
 
 ```bash
 mkdir -p ~/.cycler
-launchctl unload ~/Library/LaunchAgents/dev.cycler.linear.plist 2>/dev/null
-launchctl load  ~/Library/LaunchAgents/dev.cycler.linear.plist
-launchctl list | grep dev.cycler.linear
+launchctl unload "$PLIST" 2>/dev/null
+launchctl load  "$PLIST"
+launchctl list | grep "$LABEL"
 ```
 
 `RunAtLoad` means it polls immediately. Confirm with:

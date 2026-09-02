@@ -41,5 +41,11 @@ escapeHatch:
   maxFiles: 8
   paths: []                # e.g. [apps/macOS/**] — areas that are expensive to work inline
 
+launchd:
+  # The label of the polling job, and the name of its plist. launchctl addresses jobs by LABEL, so
+  # the two must match — every cycler command derives the filename from this one value so they cannot
+  # drift. Use your own reverse-DNS if you prefer, e.g. dev.yourname.cycler.
+  label: dev.cycler.linear
+
 linear:
   mode: auto               # auto | cli | mcp — how the harness reads and writes issues

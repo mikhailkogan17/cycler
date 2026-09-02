@@ -23,7 +23,7 @@
  * Re-dispatch an issue: remove its id from ~/.cycler/processed.json
  * Re-auth (if token revoked): run the `auth` subcommand again.
  * Config edits: take effect on the next launchd run (every 180s); force now with
- *   launchctl kickstart -k gui/$(id -u)/dev.cycler.linear
+ *   launchctl kickstart -k gui/$(id -u)/$(cycler.yaml launchd.label)
  */
 
 import { spawn, exec } from 'node:child_process';
