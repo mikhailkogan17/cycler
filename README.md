@@ -105,6 +105,34 @@ line of output per passing check, and the pass marker the commit hook reads.
 If a repo has no gate and no lint/build/test script, the default reports **FAIL**, not a pass. A gate
 that checked nothing must not read as green.
 
+## Security — what delegating actually grants
+
+**Read this before pointing cycler at a workspace other people can write to.**
+
+The trigger is narrow by design: the poller selects issues by the **delegate** field and nothing else.
+It does not act on comments, on mentions, or on assignment. Writing a comment on an issue — or on a
+pull request — starts nothing. Nothing listens on your machine, and no inbound request can reach it.
+
+What a delegation *does* grant is significant. The issue's title and description become the prompt of
+a Claude Code session running in your repository, by default with `--permission-mode auto`. So:
+
+> **Anyone who can delegate an issue to the agent can run code on your machine.**
+> Treat delegate rights as equivalent to repository write access plus a shell.
+
+That is the correct mental model, and it is not softened by anything cycler does. The mitigations that
+do exist:
+
+- **The dispatch command is built without a shell.** Placeholders are substituted *after* the command
+  is split into arguments, so an issue title containing quotes, backticks or `$(…)` cannot introduce
+  an argument or execute anything. There is a test for this.
+- **The harness constrains what a run may touch** — a contract with allowed and forbidden paths, a
+  hook that denies edits outside them, a hook that denies commits on a red gate, and a hook that
+  denies writes outside the session's worktree.
+- **It opens pull requests and never merges.** Every change still passes a human.
+
+None of that is a substitute for trusting the people who can delegate. On a solo workspace — the case
+cycler is built for — this is a non-issue. On a shared one, restrict who can delegate to the agent.
+
 ## Why the comments cite issue keys
 
 Much of this codebase explains itself with references like `APL-41` or `APL-48`. They are issue keys
