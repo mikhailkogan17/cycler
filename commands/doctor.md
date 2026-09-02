@@ -1,0 +1,76 @@
+---
+description: Diagnose a cycler install — token, launchd job, paths, gate, and the delegate trap.
+---
+
+Run every check below and report each as OK or the specific failure. Do not stop at the first
+failure; a partial diagnosis sends people to fix the wrong thing.
+
+These are the six things that have actually broken, not a generic checklist.
+
+## 1. Token — the 24h cliff
+
+```bash
+node -e "const t=require(require('os').homedir()+'/.cycler/token.json');console.log(Object.keys(t).join(','))"
+```
+
+`access_token` AND `refresh_token` must both be present. Access tokens last ~24h; **without the
+refresh token the poller stops dispatching a day after setup and the symptom is a 401 that reads
+like a network fault.** If `refresh_token` is missing, re-run `/cycler:setup`.
+
+## 2. launchd label vs filename
+
+```bash
+launchctl list | grep dev.cycler.linear
+/usr/libexec/PlistBuddy -c "Print :Label" ~/Library/LaunchAgents/dev.cycler.linear.plist
+```
+
+The printed `Label` must be `dev.cycler.linear`. `launchctl` addresses jobs by **label, not
+filename**; a mismatch fails with a 501 that reads like "not running".
+
+## 3. Absolute binaries
+
+```bash
+/usr/libexec/PlistBuddy -c "Print :ProgramArguments:0" ~/Library/LaunchAgents/dev.cycler.linear.plist
+/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:CLAUDE_BIN" ~/Library/LaunchAgents/dev.cycler.linear.plist
+```
+
+Both must be absolute paths that exist and are executable. launchd's PATH is
+`/usr/bin:/bin:/usr/sbin:/sbin` — a bare `node` or `claude` is not found.
+
+## 4. Repo
+
+```bash
+REPO="$(node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" repo.path "$PWD")"
+git -C "$REPO" rev-parse --show-toplevel
+```
+
+Must resolve to a git repo. Also confirm `cycler.yaml` is found:
+
+```bash
+node -e "import('${CLAUDE_PLUGIN_ROOT}/lib/yaml.mjs').then(m=>console.log(m.configPath()||'NONE'))"
+```
+
+## 5. Which gate resolves
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/harness/gate.sh" --fast 2>&1 >/dev/null | head -1
+```
+
+Report the repo's own gate or cycler's default **by name**. A repo with real checks that is silently
+running the default gate is passing on less than the user thinks.
+
+## 6. The delegate trap
+
+Compare what is assigned to the agent against what is delegated to it:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/poller/poller.mjs" 2>&1 | tail -1
+```
+
+`poll ok: N delegated, M processed` — if `N` is 0 while the user believes issues are queued, they
+almost certainly **assigned** rather than **delegated**. `lin issue update --assignee` is the wrong
+field and dispatches nothing while looking correct. Point them at `/cycler:start <KEY>`.
+
+## Report
+
+One line per check. End with a single sentence saying whether the loop is currently able to run.

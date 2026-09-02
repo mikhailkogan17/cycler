@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Delegate a Linear issue to the "Claude" agent — the trigger the poller watches for.
+#
+# `linear-cli` has --assignee but no --delegate, and the poller filters on DELEGATE
+# (`delegate: { id: { eq: viewer.id } }` in linear-claude-poller.mjs), not assignee. Assigning an
+# issue therefore looks right in the UI and dispatches nothing. This sets the field that actually
+# fires, using the same self-refreshing token as ~/bin/lin.
+#
+# Usage: lin-delegate APL-14 [APL-24 ...]
+set -uo pipefail
+PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"; export PATH
+TOKEN_PATH="$HOME/.linear-claude/token.json"
+API=https://api.linear.app/graphql
+
+for b in jq curl; do command -v "$b" >/dev/null 2>&1 || { echo "lin-delegate: '$b' not found" >&2; exit 127; }; done
+[ $# -gt 0 ] || { echo "usage: lin-delegate <ISSUE-KEY> [more...]" >&2; exit 2; }
+
+TOK="$(jq -r '.access_token // empty' "$TOKEN_PATH" 2>/dev/null)"
+[ -n "$TOK" ] || { echo "lin-delegate: no token at $TOKEN_PATH — run the poller's auth" >&2; exit 1; }
+
+gql() { curl -s -X POST "$API" -H 'Content-Type: application/json' -H "Authorization: Bearer $TOK" -d "$1"; }
+
+# The delegate is whoever this token authenticates as — the Claude OAuth app itself.
+ME="$(gql '{"query":"query{viewer{id name}}"}' | jq -r '.data.viewer.id // empty')"
+[ -n "$ME" ] || { echo "lin-delegate: could not resolve viewer — token expired? run: lin issue view APL-1" >&2; exit 1; }
+
+rc=0
+for KEY in "$@"; do
+  ID="$(gql "{\"query\":\"query(\$k:String!){issue(id:\$k){id}}\",\"variables\":{\"k\":\"$KEY\"}}" | jq -r '.data.issue.id // empty')"
+  [ -n "$ID" ] || { echo "FAIL  $KEY — no such issue" >&2; rc=1; continue; }
+  OUT="$(gql "{\"query\":\"mutation(\$id:String!,\$d:String!){issueUpdate(id:\$id,input:{delegateId:\$d}){success issue{identifier delegate{name}}}}\",\"variables\":{\"id\":\"$ID\",\"d\":\"$ME\"}}")"
+  if [ "$(printf '%s' "$OUT" | jq -r '.data.issueUpdate.success // false')" = true ]; then
+    echo "OK    $KEY delegated to $(printf '%s' "$OUT" | jq -r '.data.issueUpdate.issue.delegate.name')"
+  else
+    echo "FAIL  $KEY — $(printf '%s' "$OUT" | jq -c '.errors // .')" >&2; rc=1
+  fi
+done
+# The poller re-dispatches only issues it has not seen; it polls every 180s.
+[ $rc -eq 0 ] && echo "poller picks these up within 180s — force now: launchctl kickstart -k gui/\$(id -u)/dev.kogan.linear-claude"
+exit $rc

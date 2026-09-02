@@ -1,0 +1,45 @@
+# cycler.yaml — copy to your repo root and edit. Every key is optional; the comment shows the default.
+#
+# /cycler:setup writes this for you. It is checked in on purpose: the branch prefix, the PR base and
+# the escape hatch are facts about the repo, and they belong next to the code they govern.
+#
+# Secrets are NOT here. The Linear client id/secret and the OAuth token live in ~/.cycler/, which is
+# outside the repo precisely so a config file can be committed without thinking about it.
+
+repo:
+  path: ~/your-repo        # where sessions are started. Default: the repo cycler.yaml sits in
+  base: main               # PR base branch
+  branchPrefix: claude/    # branches are <branchPrefix><ISSUE-KEY>
+
+routes:
+  default: /task           # the implement-and-gate workflow
+  byLabel:
+    # A lookup on a label a human already wrote — deliberately NOT a classifier. A model here would
+    # infer, less reliably, something already recorded, and a router that returns the default for
+    # everything is indistinguishable from a working one until something audits it.
+    - label: research
+      workflow: /research
+      why: a decision, not a diff — nothing to gate or audit
+
+dispatch:
+  # The whole command, as a template: {workflow} {issue} {title} {url} {session}.
+  # Do NOT add --print: it conflicts with --background and claude exits 1, which looks exactly like
+  # "the agent never saw the issue".
+  command: >
+    claude --background --name "{session}" --remote-control "{session}"
+    --remote-control-session-name-prefix linear --permission-mode auto
+    --append-system-prompt "Started by cycler for {issue}" "{workflow} {issue}"
+
+  # launchd hands a job PATH=/usr/bin:/bin:/usr/sbin:/sbin. The dispatched session inherits it, so
+  # without this it cannot find node, gh, claude or lin and stalls asking a human. An interactive
+  # session never sees this, which is why it only shows up once dispatch is automated.
+  pathPrepend: [~/.local/bin, ~/bin, /opt/homebrew/bin, /usr/local/bin]
+
+escapeHatch:
+  # Past these, the session must run the full workflow instead of editing inline. One driver session
+  # carrying a large change grows its context monotonically and re-reads every earlier tool result.
+  maxFiles: 8
+  paths: []                # e.g. [apps/macOS/**] — areas that are expensive to work inline
+
+linear:
+  mode: auto               # auto | cli | mcp — how the harness reads and writes issues

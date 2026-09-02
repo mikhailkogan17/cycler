@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# linear-cli, authenticated from the poller's OAuth token.
+#
+# Do NOT put the token in .linear.toml or a static LINEAR_API_KEY: Linear access tokens expire every
+# 24h (expires_in: 86399). A pinned copy works for a day and then fails with a 401 that reads like a
+# network fault — the exact trap that cost a week of debugging on the previous orchestrator.
+#
+# ~/.linear-claude/token.json is the single source of truth; the poller refreshes it in place, so
+# reading it here means this wrapper is correct for as long as the poller runs. On a 401 it refreshes
+# once itself, so `lin` also works when the poller has not run for a while.
+set -uo pipefail
+
+# Pin the PATH rather than trusting the caller's. launchd hands a job a minimal PATH
+# (/usr/bin:/bin:/usr/sbin:/sbin), and a session spawned from one inherits it — so `linear` (and every
+# other brew binary) is invisible and this wrapper dies with "linear: command not found". That string
+# does not match the auth regex below, so it surfaced as an unexplained failure rather than a missing
+# binary: the APL-16 run read it as an auth problem and spent its budget chasing the token.
+# The poller now sets PATH on the sessions it spawns, but that only covers sessions IT spawns; a hook,
+# a cron job, or a future launcher gets it wrong again. Fixing it here makes the wrapper correct on its
+# own terms, whoever calls it.
+PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+export PATH
+
+DIR="$HOME/.linear-claude"
+TOKEN_PATH="$DIR/token.json"
+CONFIG_PATH="$DIR/config.json"
+
+refresh() {
+  local cid cs rt resp
+  cid=$(jq -r '.clientId // empty' "$CONFIG_PATH" 2>/dev/null)
+  cs=$(jq -r '.clientSecret // empty' "$CONFIG_PATH" 2>/dev/null)
+  rt=$(jq -r '.refresh_token // empty' "$TOKEN_PATH" 2>/dev/null)
+  [ -n "$cid" ] && [ -n "$cs" ] && [ -n "$rt" ] || return 1
+  resp=$(curl -s -X POST https://api.linear.app/oauth/token \
+    -d grant_type=refresh_token -d "client_id=$cid" -d "client_secret=$cs" -d "refresh_token=$rt")
+  printf '%s' "$resp" | jq -e '.access_token' >/dev/null 2>&1 || return 1
+  # Merge, because a refresh response may omit refresh_token and dropping it breaks the NEXT refresh.
+  printf '%s' "$resp" > "$DIR/.refresh.$$" \
+    && jq -s '.[0] * .[1]' "$TOKEN_PATH" "$DIR/.refresh.$$" > "$DIR/.merged.$$" \
+    && mv "$DIR/.merged.$$" "$TOKEN_PATH" && chmod 600 "$TOKEN_PATH"
+  rm -f "$DIR/.refresh.$$"
+  return 0
+}
+
+# Say which binary is missing, and say it as a missing binary. Everything below assumes these exist;
+# without the check a missing `linear` reads as an auth failure and a missing `jq` silently yields an
+# empty token, which reads as one too.
+for _b in linear jq curl; do
+  command -v "$_b" >/dev/null 2>&1 || {
+    echo "lin: '$_b' not found on PATH ($PATH) — install it, or the caller stripped the environment" >&2
+    exit 127
+  }
+done
+
+run() { LINEAR_API_KEY="$(jq -r '.access_token // empty' "$TOKEN_PATH" 2>/dev/null)" linear "$@"; }
+
+out=$(run "$@" 2>&1); code=$?
+if printf '%s' "$out" | grep -qiE 'not authenticated|AUTHENTICATION_ERROR|No API key configured'; then
+  refresh && out=$(run "$@" 2>&1) && code=0 || code=1
+fi
+printf '%s\n' "$out"
+exit $code

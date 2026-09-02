@@ -1,0 +1,6 @@
+node_modules/
+.DS_Store
+*.log
+# Contracts are per-run working state, never source.
+.claude/harness/contracts/
+.test-results/
