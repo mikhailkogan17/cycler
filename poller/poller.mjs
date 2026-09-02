@@ -49,7 +49,7 @@ const ycfg = readConfig();
 const expand = (v) => String(v).replace(/^~(?=$|\/)/, homedir());
 const REPO_PATH = expand(process.env.REPO_PATH || ycfg.repo?.path || '~/your-repo');
 const PATH_PREPEND = (ycfg.dispatch?.pathPrepend?.length
-  ? cfg.dispatch.pathPrepend
+  ? ycfg.dispatch.pathPrepend
   : ['~/.local/bin', '~/bin', '/opt/homebrew/bin', '/usr/local/bin']).map(expand);
 // /task runs the contract -> implement -> audit -> gate -> PR workflow. Measured against running the
 // harness inline in one long-lived session on the same issue and contract: 1.68M subagent tokens and a
@@ -152,7 +152,7 @@ async function auth() {
     '&response_type=code' +
     `&scope=${encodeURIComponent(SCOPES)}` +
     '&actor=app' + // app acts as itself ("Claude"), not as you
-    '&state=linear-claude';
+    '&state=cycler'; // OAuth anti-CSRF nonce; echoed back on the callback
 
   const server = createServer(async (req, res) => {
     const u = new URL(req.url, 'http://localhost:8787');

@@ -6,7 +6,7 @@
 # and ended its report with "please file this manually" — and since the review contract lens treats a
 # confirmed-but-unfiled defect as BLOCKING, the process was unsatisfiable by construction.
 #
-# `~/bin/lin` is a plain CLI: present or absent, never half-connected.
+# `${CLAUDE_PLUGIN_ROOT}/poller/lin` is a plain CLI: present or absent, never half-connected.
 #
 # Usage: file-followups.sh <CONTRACT_PATH> <ISSUE> [--dry-run]
 set -uo pipefail

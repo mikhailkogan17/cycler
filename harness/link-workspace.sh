@@ -4,12 +4,12 @@
 # Give a git worktree its own node_modules whose WORKSPACE packages point at that worktree.
 #
 # Why this exists (APL-48 / APL-50 / APL-53 all paid for it):
-# this repo is an npm workspace, so `<main>/node_modules/@applygent/shared` is itself a symlink to
+# in an npm workspace, so `<main>/node_modules/@your-scope/shared` is itself a symlink to
 # `<main>/packages/shared`. A worktree that symlinks the WHOLE root node_modules therefore compiles
 # its own `src/` against the MAIN checkout's copy of every workspace package. New exports added in
 # the worktree appear not to exist:
 #
-#     Module '"@applygent/shared"' has no exported member 'memoryPath'
+#     Module '"@your-scope/shared"' has no exported member 'somethingYouJustAdded'
 #
 # ...which reads as a code bug and is not one. AGENTS.md documents the hazard ("Worktree hazard:
 # never symlink root node_modules") and prescribes a full per-worktree `npm install`. That is also
@@ -49,7 +49,7 @@ fi
 # NOTE the deeper cause, found while building this: worktrees live INSIDE the repo
 # (<main>/.claude/worktrees/<name>), so even with NO node_modules at all, Node's upward module
 # resolution walks out of the worktree and finds the MAIN checkout's node_modules — including its
-# @applygent/* symlinks pointing at the MAIN packages/*. The `ln -s` this replaces is one way to get
+# @your-scope/* symlinks pointing at the MAIN packages/*. The `ln -s` this replaces is one way to get
 # shadowed; the nesting means a worktree with a missing or partial node_modules is shadowed too.
 # So this script is self-healing rather than all-or-nothing: it does not trust a directory being
 # present, it checks that each workspace package actually resolves inside THIS worktree.
@@ -113,8 +113,8 @@ done
 # 2. Workspace packages: point at THIS worktree's packages/*.
 #
 # EVERY write below must land inside $W. A scope directory that is itself a SYMLINK is the trap: on a
-# symlinked '@applygent', `mkdir -p` succeeds silently and the following rm -rf + ln -s write THROUGH
-# it into the main checkout, repointing <main>/node_modules/@applygent/shared at this worktree. That
+# symlinked '@your-scope', `mkdir -p` succeeds silently and the following rm -rf + ln -s write THROUGH
+# it into the main checkout, repointing <main>/node_modules/@your-scope/shared at this worktree. That
 # is the exact corruption AGENTS.md documents as having cost three tasks a fix round each — except
 # inflicted on the main checkout, and left dangling once the worktree is removed. So: never mkdir over
 # a symlink, and verify containment before and after.
@@ -163,46 +163,10 @@ done <<< "$WS_NAMES"
 
 echo "link-workspace: $linked third-party links + $wslinked workspace packages -> $W/packages/*"
 
-# 3. macOS app bootstrap (APL-58).
+# A repo that needs more than node_modules in a fresh worktree — a gitignored config rendered from an
+# example, a generated artifact, a native dependency — declares it as `worktree.bootstrap` in
+# cycler.yaml. The Branch stage runs it after this script, advisory and never fatal.
 #
-# Two things the macOS build needs that git does not carry, so every fresh worktree rediscovers them
-# by failing: a Secrets.xcconfig (gitignored — `xcodegen generate` fails spec validation without one)
-# and a built render sidecar (the "Sign or strip render sidecar" build phase fails without it).
-#
-# Advisory, never fatal: a Node-only worktree must not be blocked because Xcode or the sidecar
-# toolchain is absent. Everything below is skipped when its inputs or tools are missing, and a failed
-# sidecar build warns rather than exiting — the workspace links above are already done and correct.
-if [ -d "$W/apps/macOS" ]; then
-  # Secrets.xcconfig: create from the example only when absent. NEVER overwrite — an existing one may
-  # hold real credentials, and this script is expected to be safe to re-run.
-  secrets="$W/apps/macOS/Config/Secrets.xcconfig"
-  secrets_example="$W/apps/macOS/Config/Secrets.example.xcconfig"
-  if [ -e "$secrets" ]; then
-    echo "link-workspace: Secrets.xcconfig already present — left alone"
-  elif [ -f "$secrets_example" ]; then
-    if cp "$secrets_example" "$secrets"; then
-      echo "link-workspace: created Secrets.xcconfig from Secrets.example.xcconfig (gitignored)"
-    else
-      echo "link-workspace: WARNING could not create '$secrets' — run 'cp \"$secrets_example\" \"$secrets\"' by hand" >&2
-    fi
-  else
-    echo "link-workspace: WARNING no Secrets.example.xcconfig — xcodegen will fail spec validation" >&2
-  fi
-
-  # Render sidecar: `npm run sidecar` writes apps/macOS/Applygent/Sidecar/, which is gitignored in
-  # full. sidecar.mjs is its entry point, so its absence is the cheap "not built yet" test.
-  if [ -f "$W/apps/macOS/Applygent/Sidecar/sidecar.mjs" ]; then
-    echo "link-workspace: render sidecar already built — left alone"
-  elif ! command -v npm >/dev/null 2>&1; then
-    echo "link-workspace: WARNING npm not found — skipping sidecar build; run 'npm run sidecar' before xcodebuild" >&2
-  else
-    echo "link-workspace: building render sidecar (npm run sidecar) — first time only"
-    if (cd "$W" && npm run sidecar >/dev/null 2>&1); then
-      echo "link-workspace: render sidecar built -> apps/macOS/Applygent/Sidecar"
-    else
-      echo "link-workspace: WARNING 'npm run sidecar' failed — re-run it by hand to see why; the macOS build will fail without it" >&2
-    fi
-  fi
-fi
-
+# It used to live here, hardcoded: one project's Secrets.xcconfig and its `npm run sidecar`. Real
+# needs, but that project's, executed in every worktree of every repo that installed the harness.
 exit 0

@@ -16,7 +16,7 @@ description: Run a task end-to-end in ONE workflow (task-orchestration): contrac
 1. Run `git status --short` (respect in-flight changes — do not touch them).
 2. **If the argument is a Linear reference** — a `https://linear.app/<workspace>/issue/APL-1/...` URL or a
    bare key like `APL-12` — resolve it before invoking the workflow:
-   - Read it with `~/bin/lin issue view <KEY>` — one Bash call, no tool schema to load. Prefer this
+   - Read it with `"${CLAUDE_PLUGIN_ROOT}/poller/lin" issue view <KEY>` — one Bash call, no tool schema to load. Prefer this
      over the Linear MCP: `ToolSearch` + `get_issue` costs a schema load and a tool round-trip, and the
      MCP server is not always connected (in dispatched sessions the Linear MCP never finished connecting, so the
      follow-up-filing step there was unsatisfiable by construction).
@@ -35,8 +35,8 @@ description: Run a task end-to-end in ONE workflow (task-orchestration): contrac
 3. **Post a start comment before invoking the workflow** (Linear reference only):
 
 ```bash
-~/bin/lin issue comment list <KEY> | grep -q 'harness:<KEY>:dispatched' \
-  || ~/bin/lin issue comment add <KEY> --body '<!-- harness:<KEY>:dispatched -->
+"${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment list <KEY> | grep -q 'harness:<KEY>:dispatched' \
+  || "${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment add <KEY> --body '<!-- harness:<KEY>:dispatched -->
 🔧 Harness run started — contract → implement → audit → gate → PR → review. Next comment lands when the PR opens.'
 ```
 
@@ -56,7 +56,7 @@ node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" repo.path ""
 
    Pass those as `prBase`, `branchPrefix` and `cwd` below. A repo with no `cycler.yaml` gets the
    defaults, which are the values shown in those commands — nothing breaks, nothing is silently
-   applygent-shaped.
+   shaped like somebody else's repo.
 
 5. Call the single workflow:
 
@@ -86,7 +86,7 @@ Workflow({ scriptPath: '${CLAUDE_PLUGIN_ROOT}/workflows/task-orchestration.js', 
    Linear connector, so you do them:
    - Walk the array in order. Each entry has `kind`, `issue`, `marker`, `stateType`,
      `statePreference`, `assignSelf`, `links[]`, `body`.
-   - **Use `~/bin/lin`, not the Linear MCP** (see step 2 for why): `lin issue comment list <KEY>` to
+   - **Use `${CLAUDE_PLUGIN_ROOT}/poller/lin`, not the Linear MCP** (see step 2 for why): `lin issue comment list <KEY>` to
      check, `lin issue comment add <KEY> --body '...'` to write, `lin issue update <KEY> --state
      '<name-or-type>'` to move state.
    - **Idempotency:** list the comments first and skip a write whose `marker` is already present with

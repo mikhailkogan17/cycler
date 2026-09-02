@@ -5,7 +5,7 @@
 # 24h (expires_in: 86399). A pinned copy works for a day and then fails with a 401 that reads like a
 # network fault — the exact trap that cost a week of debugging on the previous orchestrator.
 #
-# ~/.linear-claude/token.json is the single source of truth; the poller refreshes it in place, so
+# $CYCLER_HOME/token.json (default ~/.cycler) is the single source of truth; the poller refreshes it in place, so
 # reading it here means this wrapper is correct for as long as the poller runs. On a 401 it refreshes
 # once itself, so `lin` also works when the poller has not run for a while.
 set -uo pipefail
@@ -21,7 +21,9 @@ set -uo pipefail
 PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 export PATH
 
-DIR="$HOME/.linear-claude"
+# Same directory the poller uses, same override. These drifted apart once — the poller moved and
+# these two CLIs did not, so they read a token that no longer existed.
+DIR="${CYCLER_HOME:-$HOME/.cycler}"
 TOKEN_PATH="$DIR/token.json"
 CONFIG_PATH="$DIR/config.json"
 

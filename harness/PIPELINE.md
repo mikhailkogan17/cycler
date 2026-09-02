@@ -8,9 +8,9 @@ nowhere at all.
 
 | # | Step | Who | Concretely |
 |---|---|---|---|
-| 1 | Delegate | you | `~/bin/lin-delegate APL-14` — sets `delegateId`, **not** assignee |
-| 2 | Poll | launchd `dev.kogan.linear-claude`, every 180s | queries `delegate == the Claude OAuth app` |
-| 3 | Dispatch | poller | `claude --background --permission-mode auto "<workflow> APL-14"` in `~/applygent` |
+| 1 | Delegate | you | `"${CLAUDE_PLUGIN_ROOT}/poller/lin-delegate" APL-14` — sets `delegateId`, **not** assignee |
+| 2 | Poll | the launchd job (`launchd.label`, default `dev.cycler.linear`), every 180s | queries `delegate == the Claude OAuth app` |
+| 3 | Dispatch | poller | `claude --background --permission-mode auto "<workflow> APL-14"` in `repo.path` |
 | 4 | Record | poller | comments the session id on the issue |
 | 5 | Resolve | the skill | `lin issue view APL-14` → title + body become the task |
 | 6 | Work | `task-orchestration.js` | the phases in §2 |
@@ -23,15 +23,20 @@ nowhere at all.
 `lin issue update --assignee claude` looks right in the UI, changes the wrong field and dispatches
 nothing. That silent no-op is the easiest way to believe work is queued when it is not.
 
-**The launchd label is not the plist filename.** File: `dev.mikhailkogan.linear-claude.plist`. Label
-inside: `dev.kogan.linear-claude`. `launchctl` addresses jobs by label:
+**`launchctl` addresses jobs by LABEL, not by filename**, and a mismatch fails with a 501 that reads
+like "not running". This is not hypothetical: the setup cycler grew out of had a job labelled
+`dev.example.agent` living in a plist named after something else, and an `unload` of the
+obvious filename silently did nothing while `launchctl list` still showed the job.
+
+Every cycler command therefore derives the filename from the one configured label:
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/dev.kogan.linear-claude   # correct
-launchctl list | grep linear                                  # prints the real label
+LABEL="$(node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" launchd.label dev.cycler.linear)"
+launchctl kickstart -k "gui/$(id -u)/$LABEL"   # force a poll now
+launchctl list | grep "$LABEL"                 # what is actually loaded
 ```
 
-**Re-dispatching:** `~/.linear-claude/processed.json` holds the issue UUIDs already dispatched, so
+**Re-dispatching:** `~/.cycler/processed.json` holds the issue UUIDs already dispatched, so
 re-delegating something the poller has seen does nothing. Remove its id to force a re-run. Issues in
 a `completed` or `canceled` state are skipped regardless.
 
@@ -85,9 +90,15 @@ One line per passing check; only failures print detail; the last line is `GATE: 
 
 **Never run `danger` bare** — it exits 0 even when it fails the build, so a bare run reads as a pass.
 
-**`--fast` does not test Swift; `--full` does.** `gate.sh:238-266` runs the whole Applygent scheme
-under `--full`: serialized (Factory's `Container.shared` is a global registry, so parallel suites
-clobber each other into a hang), 900s hard kill, and `Test run with 0 tests` treated as a failure.
+**`--fast` and `--full` are your gate's distinction to make.** cycler's default gate runs the same
+checks either way; a repo gate typically keeps a slow suite out of `--fast`. Whatever you exclude,
+put it in `cycler.yaml` under `verify.steps` so the verify agent still runs it — a check that lives
+nowhere is a check nobody runs.
+
+Two things a slow suite teaches, from the repo this grew in: run it **serialized** if your DI
+container is a global registry (parallel suites clobber each other's registrations into a hang), and
+treat `Test run with 0 tests` as a **failure** — `xcodebuild` prints `** TEST SUCCEEDED **` when a
+`-only-testing` filter matches nothing, so a typo reads as a green suite.
 This file previously claimed the gate never ran Swift at all, which was false and had a cost — it is
 why `--full` stopped being run while ~226 Swift tests sat skipped behind one stale bitmap.
 
@@ -113,9 +124,9 @@ Two things it still cannot tell you:
 | watch one | `claude attach <id>` |
 | read its log | `claude logs <id>` (raw terminal escapes; prefer the transcript) |
 | stop one | `claude stop <id>` |
-| poller log | `~/.linear-claude/poller.log` |
-| force a poll | `launchctl kickstart -k gui/$(id -u)/dev.kogan.linear-claude` |
-| read/write Linear | `~/bin/lin` (use `--body-file` for markdown) |
+| poller log | `~/.cycler/poller.log` |
+| force a poll | `launchctl kickstart -k "gui/$(id -u)/$LABEL"` (see above) |
+| read/write Linear | `${CLAUDE_PLUGIN_ROOT}/poller/lin` (use `--body-file` for markdown) |
 
 Inside a dispatched session you are working an issue under `ISSUE-PROCESS.md`. You have no terminal
 and nobody is watching: a question asked mid-run blocks forever, so decide and record the decision in

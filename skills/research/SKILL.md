@@ -20,7 +20,7 @@ An issue key (`APL-27`), a Linear URL, or a bare question.
 ## 1. Do not duplicate — check first
 
 ```bash
-~/bin/lin issue view <KEY>
+"${CLAUDE_PLUGIN_ROOT}/poller/lin" issue view <KEY>
 ```
 
 **Read the existing comments before doing anything.** A prior run may already have answered this: a
@@ -62,7 +62,7 @@ was.**
 ## 4. Post it
 
 ```bash
-~/bin/lin issue comment add <KEY> --body-file <file>
+"${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment add <KEY> --body-file <file>
 ```
 
 Use `--body-file` for anything long: a body with backticks, newlines and code spans gets mangled
@@ -95,6 +95,6 @@ research runs that worked were single agents.
   empty tree is a check that cannot fail.
 - Keep tool output small: read ranges, grep for symbols, never dump whole files. The context you
   accumulate is re-read on every later turn of your own run.
-- File genuinely out-of-scope defects you trip over as Triage issues (`~/bin/lin issue create --team
+- File genuinely out-of-scope defects you trip over as Triage issues (`"${CLAUDE_PLUGIN_ROOT}/poller/lin" issue create --team
   APL --title '...' --description-file <file> --state triage`), at most 3, each verified. Both
   research runs found real bugs this way.

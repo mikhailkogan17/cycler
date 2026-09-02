@@ -35,6 +35,37 @@ dispatch:
   # session never sees this, which is why it only shows up once dispatch is automated.
   pathPrepend: [~/.local/bin, ~/bin, /opt/homebrew/bin, /usr/local/bin]
 
+verify:
+  # Checks your gate deliberately leaves out — usually because they are slow enough that putting them
+  # in the gate would push people back to running them by hand. The verify agent runs these; the gate
+  # stays fast. Omit the section entirely and the verify agent is told about no extra steps at all.
+  #
+  # `when` is the path prefix that makes the step apply, `run` is the command, `notes` is the prose an
+  # agent needs in order not to get it wrong. Notes matter as much as the command: the case this
+  # replaced needed "there is no ApplygentTests scheme, it is a target" to avoid a run-killing typo.
+  # steps:
+  #   - when: apps/macOS/**
+  #     run: cd apps/macOS && xcodegen generate && xcodebuild -scheme App -destination 'platform=macOS' test
+  #     notes: |
+  #       Run ONE suite relevant to the diff (-only-testing:AppTests/<Suite>).
+  #       Serialize it if your DI container is a global registry — parallel suites clobber each other.
+  #       `Test run with 0 tests` is a FAILURE: xcodebuild prints TEST SUCCEEDED when a filter matches
+  #       nothing, so a typo reads as a green suite.
+
+worktree:
+  # Only an npm-workspace repo needs this, and only that repo knows it is one. With it, a worktree
+  # gets a real node_modules whose workspace packages point at the WORKTREE. Without it, a worktree
+  # gets no node_modules step at all — which is what a Go, Python or Rust repo wants.
+  #
+  # Sharing the main checkout's node_modules instead makes the worktree compile its own src/ against
+  # the MAIN checkout's copy of every workspace package. Three issues each lost a fix round to it.
+  # linkWorkspace: true
+
+  # One command a fresh worktree needs before anything can build: a gitignored config rendered from
+  # its example, a generated artifact, a native dependency. Advisory — a failure is reported and the
+  # run continues, because a diff that never touches that toolchain must not be blocked by it.
+  # bootstrap: make dev-setup
+
 escapeHatch:
   # Past these, the session must run the full workflow instead of editing inline. One driver session
   # carrying a large change grows its context monotonically and re-reads every earlier tool result.

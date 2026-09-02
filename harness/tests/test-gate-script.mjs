@@ -50,12 +50,16 @@ await t('verify no longer asks the model to plan and consolidate checks', async 
 })
 
 await t('verify still owns what a fixed script cannot know', async () => {
+  // Two things the gate cannot cover: the contract's own acceptance commands, and whatever slow
+  // check the repo deliberately kept out of --fast. The second is cycler.yaml's verify.steps now —
+  // it used to be one project's xcodebuild invocation, hardcoded here for everyone.
+  const step = { when: 'apps/macOS/**', run: 'xcodebuild -scheme App test', notes: 'Pick ONE suite.' }
   const { responder, prompts } = recorder({ ...green })
-  await run({ args: base, responder })
+  await run({ args: { ...base, config: { verify: { steps: [step] } } }, responder })
   const p = prompts['verify-gate']
   assert.ok(/Acceptance checks/.test(p), 'the contract\'s task-specific commands still need running')
-  assert.ok(/xcodebuild/.test(p), 'Swift build/test is excluded from gate.sh, so the agent must cover it')
-  assert.ok(/only-testing:ApplygentTests\//.test(p), 'the no-ApplygentTests-scheme trap must survive')
+  assert.ok(p.includes(step.run), 'a configured slow check must reach the verify agent')
+  assert.ok(p.includes(step.notes), 'the trap-avoiding prose must survive with it')
 })
 
 process.exit(fails ? 1 : 0)

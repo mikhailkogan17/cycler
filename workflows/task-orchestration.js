@@ -84,6 +84,65 @@ const repoRoot = args?.cwd || process.cwd()
 // Where the plugin's own scripts and docs live. Every prompt below interpolates this rather than a
 // literal path, so the harness works wherever the plugin is installed.
 const PLUGIN_ROOT = args?.pluginRoot || process.env.CLAUDE_PLUGIN_ROOT || '.'
+// The repo's cycler.yaml, parsed and passed in by the /task skill. Everything project-specific lives
+// here rather than in this file: the workflow used to name one project's Xcode schemes and npm
+// workspace layout in every prompt of every run, in every repo that installed it.
+const config = args?.config || {}
+
+// cycler.yaml: worktree.linkWorkspace. Only an npm-workspace repo needs this, and only that repo
+// knows it is one. Unset, a worktree simply has no node_modules step — which is correct for a Go,
+// Python or Rust repo and was previously impossible to express.
+const linkWorkspaceStep = config?.worktree?.linkWorkspace
+  ? `
+Then make the gate runnable — 'node_modules' is untracked, so a fresh worktree has none and every
+lint/test check would fail on a missing module rather than on the code:
+  bash "${PLUGIN_ROOT}/harness/link-workspace.sh" "$W" "$P"
+Run it EXACTLY as written. Do NOT substitute 'ln -s "$P/node_modules" "$W/node_modules"'.
+This repo is an npm workspace, so $P/node_modules/<scope>/* are symlinks into $P/packages/*. Sharing
+that directory makes the worktree compile its own src/ against the MAIN checkout's copy of every
+workspace package, so exports added in the worktree appear not to exist —
+  Module '"@your-scope/shared"' has no exported member 'somethingYouJustAdded'
+— which reads as a code bug, is not one, and cannot be fixed from inside the contract's Allowed paths.
+Three separate issues each lost a fix round to independently re-diagnosing this.
+The script gives the worktree a real node_modules: third-party packages symlinked from $P, workspace
+packages pointed at $W/packages/*. It is idempotent and self-healing, so re-running it is safe.
+If it exits non-zero, report ok:false with its stderr in 'error'. Do NOT continue with a partial
+node_modules: that is precisely the shadowed state above, and Verify would hit it as a mystery red.`
+  : ''
+
+// cycler.yaml: worktree.bootstrap — one command a fresh worktree needs before anything can build,
+// for the things git does not carry: a gitignored config rendered from an example, a generated
+// artifact, a native dependency. Advisory by design: a worktree whose diff never touches that
+// toolchain must not be blocked because the toolchain is absent.
+//
+// This replaced a hardcoded tail on link-workspace.sh that created one project's Secrets.xcconfig
+// and ran its `npm run sidecar` — real needs, but that project's, executed in everyone's worktree.
+const bootstrapStep = config?.worktree?.bootstrap
+  ? `
+Then run this repo's worktree bootstrap, from "$W":
+  ${config.worktree.bootstrap}
+It covers what git does not carry — a gitignored config rendered from its example, a generated
+artifact, a native dependency. It is ADVISORY and never fatal: if it fails, report the failure in
+'notes' and CONTINUE. A worktree whose diff does not touch that toolchain must not be blocked
+because the toolchain is missing, and Verify will surface it as a real red if it does matter.`
+  : ''
+
+// cycler.yaml: verify.steps — checks a repo needs that its gate deliberately leaves out, usually
+// because they are slow enough that putting them in --fast would push people back to running them by
+// hand. Each entry is { when, run, notes? }: `when` is the path glob that makes the step apply,
+// `run` the command, `notes` the prose an agent needs in order not to get it wrong.
+//
+// This replaced a hardcoded block naming one project's Xcode project, schemes and test target. That
+// block was gated on a path no other repo has, so it never RAN elsewhere — it was simply carried, in
+// every verify prompt of every run, telling a stranger's agent about a codebase that is not theirs.
+const verifySteps = (Array.isArray(config?.verify?.steps) && config.verify.steps.length)
+  ? config.verify.steps.map((st, i) => `## Step ${3 + i} — ONLY if ${st.when} changed
+
+The gate deliberately excludes this. From \${runCwd}:
+
+  ${st.run}
+${st.notes ? `\n${st.notes}\n` : ''}`).join('\n')
+  : ''
 let runCwd = repoRoot
 // APL-45: opt-in isolation. Default stays shared-tree because it is what every existing caller expects,
 // and because a worktree costs a checkout; parallel callers pass worktree: true. Shared-tree runs are
@@ -678,21 +737,7 @@ If 'worktree add' fails saying the branch is ALREADY CHECKED OUT elsewhere, anot
 ok:false, say so. Do NOT use --force — that puts two runs on one branch, the exact corruption this
 mode exists to prevent.
 
-Then make the gate runnable — 'node_modules' is untracked, so a fresh worktree has none and every
-eslint/vitest check would fail on a missing module rather than on the code:
-  bash "${PLUGIN_ROOT}/harness/link-workspace.sh" "$W" "$P"
-Run it EXACTLY as written. Do NOT substitute 'ln -s "$P/node_modules" "$W/node_modules"'.
-That symlink is the bug APL-48, APL-50 and APL-53 EACH lost a fix round to, and AGENTS.md forbids it by
-name ("Worktree hazard: never symlink root node_modules"): this repo is an npm workspace, so
-$P/node_modules/@applygent/* are symlinks into $P/packages/*. Sharing that directory makes the worktree
-compile its own src/ against the MAIN checkout's copy of every workspace package, so exports added in
-the worktree appear not to exist —
-  Module '"@applygent/shared"' has no exported member 'memoryPath'
-— which reads as a code bug, is not one, and cannot be fixed from inside the contract's Allowed paths.
-The script gives the worktree a real node_modules: third-party packages symlinked from $P, workspace
-packages pointed at $W/packages/*. It is idempotent and self-healing, so re-running it is safe.
-If it exits non-zero, report ok:false with its stderr in 'error'. Do NOT continue with a partial
-node_modules: that is precisely the shadowed state above, and Verify would hit it as a mystery red.
+${linkWorkspaceStep}${bootstrapStep}
 
 VERIFY before reporting success:
   git -C "$W" rev-parse --abbrev-ref HEAD   MUST be exactly $B, and MUST NOT be ${prBase}
@@ -944,7 +989,8 @@ async function runVerify() {
   // implementer was forbidden to fix). All of that now lives in the script, where it is fixed once.
   //
   // The agent still exists for the two things a fixed script cannot know: the contract's own
-  // task-specific Acceptance commands, and the Swift build/test that gate.sh deliberately excludes.
+  // task-specific Acceptance commands, and whatever slow check the repo deliberately kept out of the
+  // gate (cycler.yaml: verify.steps).
   //
   // Trust boundary unchanged: the agent reports per-check booleans; the SCRIPT computes allGreen from
   // them, so a summary verdict cannot override a failed check.
@@ -957,8 +1003,8 @@ Repo working dir: ${runCwd} — cd there FIRST. Task contract: ${contract} (READ
   CONTRACT_PATH=${contract} bash ${PLUGIN_ROOT}/harness/gate.sh --fast --base ${prBase}
 
 It prints one line per check and a final 'GATE: PASS|FAIL (n of m)'. Do NOT second-guess it, do NOT
-re-run its checks by hand, and do NOT plan a gate of your own — eslint, yamllint, swiftformat, swiftlint,
-build, tests and danger are all covered, correctly invoked, and scoped to this task's changed files.
+re-run its checks by hand, and do NOT plan a gate of your own. Whatever this repo lints, builds and
+tests with, the gate already covers it — correctly invoked, and scoped to this task's changed files.
 Report ONE entry in 'checks' per 'CHECK <name> ...' line it prints, using its PASS/FAIL verdict.
 If a check failed, re-run just that one with '--only <name>' to capture more output for the blocker.
 
@@ -968,19 +1014,7 @@ Read the contract's "Acceptance checks" section. Run any that are concrete shell
 covered by step 1 (task-specific greps, node -e structural checks, a scoped test file, and so on).
 Issue them as PARALLEL tool calls in one message. Add one 'checks' entry per command.
 
-## Step 3 — Swift build/test, ONLY if apps/macOS/** changed
-
-gate.sh deliberately excludes these: unfiltered xcodebuild is 30+ minutes and needs a suite picked per
-diff. From ${runCwd}/apps/macOS:
-
-  xcodegen generate && xcodebuild -project Applygent.xcodeproj -scheme Applygent \\
-    -destination 'platform=macOS,arch=arm64' build CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY=""
-  xcodebuild ... test ... -only-testing:ApplygentTests/<Suite>    # ONE suite relevant to the diff
-
-The ONLY schemes are 'Applygent', 'Flow' and 'ProgressIndicatorView'. There is NO 'ApplygentTests'
-scheme — it is a test TARGET inside 'Applygent'. '-scheme ApplygentTests' fails instantly and the
-implementer cannot fix it (project.yml is forbidden), which deadlocks the run.
-
+${verifySteps}
 ## Rules
 
   - passed = true ONLY if the command exited 0. Never infer it from output text ("BUILD SUCCEEDED" in a

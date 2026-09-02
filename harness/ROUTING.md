@@ -8,8 +8,9 @@ a gate and a review panel; a macOS feature done by hand skips all four.
 
 **First clear match wins.** Read top to bottom.
 
-The first two rows are **enforced, not advisory**: `linear-claude-poller.mjs` reads the issue's
-labels and dispatches `/research` for `Research` or `Harness`, `/task` otherwise, and names the route
+The first two rows are **enforced, not advisory**: `poller/poller.mjs` reads the issue's
+labels and dispatches the workflow `routes.byLabel` names — `/cycler:research` for `Research` by
+default — falling back to `routes.default`, and names the route
 it chose in the dispatch comment. Until that existed the poller ran `/task` for everything, so this
 table was advice the only automated path ignored. The rest of the table is still judgement — it
 depends on things no label records, like whether an issue is too thin to contract from.
@@ -25,7 +26,7 @@ depends on things no label records, like whether an issue is too thin to contrac
 
 Whatever the route: **`gate.sh` gates the commit.** That is not a routing decision, it is a hook.
 
-And whatever the route, **the way to start work on an issue is `~/bin/lin-delegate APL-N`**, not a
+And whatever the route, **the way to start work on an issue is `"${CLAUDE_PLUGIN_ROOT}/poller/lin-delegate" APL-N`**, not a
 locally-spawned agent. The poller turns a delegation into a real session and records it on the issue;
 a subagent records nothing outside the conversation that spawned it. `PIPELINE.md` has the details,
 including why `--assignee` is the wrong field and dispatches nothing.

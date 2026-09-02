@@ -19,14 +19,20 @@ workspace. The poller itself never calls a model — every token is spent by the
 
 ## Install
 
+In Claude Code:
+
 ```
-/plugin install cycler
+/plugin marketplace add mikhailkogan17/cycler
+/plugin install cycler@cycler
 /cycler:setup
 /cycler:start-polling
 ```
 
 `/cycler:setup` walks the Linear OAuth application, runs the authorisation, writes `cycler.yaml`, and
 verifies one poll. `/cycler:start-polling` installs the launchd job.
+
+Check it any time with `/cycler:doctor`, which tests the six things that actually break rather than a
+generic checklist.
 
 Then, in Linear, **delegate** an issue to the Claude agent. Delegate, not assign — they are different
 fields, and assigning dispatches nothing while looking correct.
@@ -98,6 +104,25 @@ line of output per passing check, and the pass marker the commit hook reads.
 
 If a repo has no gate and no lint/build/test script, the default reports **FAIL**, not a pass. A gate
 that checked nothing must not read as green.
+
+## Why the comments cite issue keys
+
+Much of this codebase explains itself with references like `APL-41` or `APL-48`. They are issue keys
+from the project cycler grew in, and you cannot look them up. They are kept deliberately.
+
+A rule with no evidence is a rule people override. "More than 8 files goes through the full workflow"
+invites an exception; "APL-41 ran inline past this limit: 331 turns, $8.68, context peaking at 216k,
+61% of it in cache reads" does not. The key is just a citation marker — every one of them is followed
+by the finding it refers to, in the same comment. What matters is the measurement, and that is always
+there in full.
+
+## Design decisions
+
+The reasoning behind the load-bearing choices — polling instead of webhooks, shipping as a plugin,
+leaving the gate in your repo, routing by label rather than by classifier — is recorded as ADRs in
+[`docs/adr/`](docs/adr/). [`docs/specs/`](docs/specs/) is the behavioural spec each part is written
+against, and [`CONTRIBUTING.md`](CONTRIBUTING.md) explains how a change moves through spec → test →
+code here.
 
 ## License
 

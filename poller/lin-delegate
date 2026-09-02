@@ -2,14 +2,14 @@
 # Delegate a Linear issue to the "Claude" agent — the trigger the poller watches for.
 #
 # `linear-cli` has --assignee but no --delegate, and the poller filters on DELEGATE
-# (`delegate: { id: { eq: viewer.id } }` in linear-claude-poller.mjs), not assignee. Assigning an
+# (`delegate: { id: { eq: viewer.id } }` in poller.mjs), not assignee. Assigning an
 # issue therefore looks right in the UI and dispatches nothing. This sets the field that actually
-# fires, using the same self-refreshing token as ~/bin/lin.
+# fires, using the same self-refreshing token as the bundled `lin`.
 #
 # Usage: lin-delegate APL-14 [APL-24 ...]
 set -uo pipefail
 PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"; export PATH
-TOKEN_PATH="$HOME/.linear-claude/token.json"
+TOKEN_PATH="${CYCLER_HOME:-$HOME/.cycler}/token.json"
 API=https://api.linear.app/graphql
 
 for b in jq curl; do command -v "$b" >/dev/null 2>&1 || { echo "lin-delegate: '$b' not found" >&2; exit 127; }; done
@@ -36,5 +36,11 @@ for KEY in "$@"; do
   fi
 done
 # The poller re-dispatches only issues it has not seen; it polls every 180s.
-[ $rc -eq 0 ] && echo "poller picks these up within 180s — force now: launchctl kickstart -k gui/\$(id -u)/dev.kogan.linear-claude"
+if [ $rc -eq 0 ]; then
+  # Print the label this machine is actually configured with. A hardcoded one here would be wrong for
+  # everyone else, and "launchctl says it is not running" is the single most misleading error in this
+  # system — launchctl addresses jobs by label, and the wrong label looks exactly like a stopped job.
+  label="$(node "$(dirname "$0")/../harness/read-config.mjs" launchd.label dev.cycler.linear 2>/dev/null || echo dev.cycler.linear)"
+  echo "poller picks these up within 180s — force now: launchctl kickstart -k \"gui/\$(id -u)/$label\""
+fi
 exit $rc

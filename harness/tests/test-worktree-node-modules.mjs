@@ -10,6 +10,11 @@ import { run } from './sim.mjs'
 import { makeResponder } from './stubs.mjs'
 import assert from 'node:assert'
 
+// Workspace linking is opt-in per repo (cycler.yaml: worktree.linkWorkspace). These cases are about
+// what an npm-workspace repo is told, so they opt in; test-repo-specifics-are-config.mjs covers the
+// unconfigured half — that no such step appears at all.
+const LINKED = { worktree: { linkWorkspace: true } }
+
 const base = { task: 'APL-99 do a thing', cwd: '/tmp' }
 let fails = 0
 const t = async (name, fn) => { try { await fn(); console.log('PASS', name) } catch (e) { fails++; console.log('FAIL', name, '\n  ', e.message) } }
@@ -30,7 +35,7 @@ function recorder(plan) {
 
 await t('the worktree gets a real node_modules, never a symlink to the main checkout', async () => {
   const { responder, prompts } = recorder({ ...green })
-  await run({ args: { ...base, worktree: true }, responder })
+  await run({ args: { ...base, worktree: true, config: LINKED }, responder })
   const p = prompts['branch:claude/APL-99']
   assert.ok(p, 'branch agent must run')
   assert.ok(/link-workspace\.sh/.test(p), 'must delegate to the script')
@@ -48,7 +53,7 @@ await t('the worktree gets a real node_modules, never a symlink to the main chec
 
 await t('the branch prompt says WHY, so the next model does not re-invent the symlink', async () => {
   const { responder, prompts } = recorder({ ...green })
-  await run({ args: { ...base, worktree: true }, responder })
+  await run({ args: { ...base, worktree: true, config: LINKED }, responder })
   const p = prompts['branch:claude/APL-99']
   assert.ok(/EXACTLY as written|Do NOT substitute/.test(p), 'a bare command invites "improvement"')
   assert.ok(/has no exported member/.test(p), 'the observable signature is what makes the ban stick')

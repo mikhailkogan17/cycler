@@ -89,7 +89,7 @@ FILES="$(section "Files expected to change")"
 COUNT="$(printf '%s\n' "$FILES" | sed '/^$/d' | wc -l | tr -d ' ')"
 
 # cycler.yaml: escapeHatch.maxFiles (default 8) and escapeHatch.paths (default: none). The path list
-# is where a repo names the areas that are expensive to work inline — applygent uses apps/macOS/**,
+# is where a repo names the areas that are expensive to work inline — a macOS app might use apps/macOS/**,
 # because an Xcode build inside a driver session is the single most context-hungry thing it does.
 READ_CFG="$(dirname "$0")/../read-config.mjs"
 MAX_FILES="$(node "$READ_CFG" escapeHatch.maxFiles 8 2>/dev/null || echo 8)"

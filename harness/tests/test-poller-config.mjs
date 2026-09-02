@@ -66,4 +66,28 @@ await t('a title with quotes and $ cannot introduce an argument', async () => {
 });
 
 rmSync(dirname(f), { recursive: true, force: true });
+// The case that would have caught all three of them.
+//
+// Renaming the module-level config object left three stale references — routes.byLabel, then
+// routes.byLabel again, then dispatch.pathPrepend. Each was a plain ReferenceError, each crashed the
+// poller at import time, and each survived a full green suite, because every test wrote a MINIMAL
+// config that never reached the branch in question. The fix is not more unit cases: it is loading
+// the shipped example, which exercises every key at once, and reading a value out of each.
+await t('the shipped example config drives every config-derived value', async () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  process.env.CYCLER_CONFIG = join(here, '..', '..', 'cycler.example.yaml');
+  const mod = await import(POLLER + '?example=1');
+
+  const argv = mod.buildDispatchArgv({ identifier: 'ABC-1', title: 't' }, '/cycler:task', '[ABC-1] t');
+  assert.ok(argv.length > 5, `dispatch argv collapsed: ${JSON.stringify(argv)}`);
+  assert.ok(!argv.includes('--print'), '--print conflicts with --background');
+  assert.ok(argv.includes('--background'), 'lost --background');
+  assert.ok(argv.some((a) => a.includes('/cycler:task ABC-1')), 'the prompt never made it into argv');
+
+  assert.strictEqual(mod.workflowFor({ identifier: 'ABC-2', labels: { nodes: [] } }).workflow, '/cycler:task');
+  assert.strictEqual(
+    mod.workflowFor({ identifier: 'ABC-3', labels: { nodes: [{ name: 'Research' }] } }).workflow,
+    '/cycler:research');
+});
+
 process.exit(fails ? 1 : 0);

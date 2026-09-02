@@ -1,9 +1,14 @@
-# Harness — applygent
+# The cycler harness
 
 Strict contract-first harness so even the cheapest executor model behaves reliably.
 
+Written from experience running it on one codebase, and the citations (`APL-41`, `APL-48`, …) are that
+codebase's issue keys. You cannot look them up; you do not need to. Every one is followed by the
+finding it refers to, in the same paragraph — the key is a citation marker, the measurement is the
+point. See *Why the comments cite issue keys* in the README.
+
 **The orchestrator is the frontier model and decides for itself.** All task work runs in ONE workflow,
-`task-orchestration` (`${CLAUDE_PLUGIN_ROOT}/workflows/task-orchestration.js`, invoked via `Workflow({ scriptPath: '<repo root>/${CLAUDE_PLUGIN_ROOT}/workflows/task-orchestration.js', args })`). The orchestrator dispatches each
+`task-orchestration` (`${CLAUDE_PLUGIN_ROOT}/workflows/task-orchestration.js`, invoked via `Workflow({ scriptPath: '${CLAUDE_PLUGIN_ROOT}/workflows/task-orchestration.js', args })`). The orchestrator dispatches each
 stage to any available model **lower than its own** via `args.executorModel`; omit to inherit.
 
 **Available models, ordered strong → weak:** `opus` → `sonnet` → `haiku`/`fable`.
@@ -136,18 +141,22 @@ renaming is what turns a tracked worktree into an orphan.
 
 ### Worktree `node_modules` — the shadowing bug (APL-48 / APL-50 / APL-53)
 
+**Opt in with `worktree.linkWorkspace: true` in `cycler.yaml`.** Only an npm-workspace repo needs
+this step and only that repo knows it is one; unset, a worktree simply gets no `node_modules` step,
+which is what a Go, Python or Rust repo wants.
+
 The Branch stage used to run `ln -s "$P/node_modules" "$W/node_modules"`. That is the thing `AGENTS.md`
 forbids by name under *"Worktree hazard: never symlink root node_modules"* — this table said it was
 normal while `AGENTS.md` said it was forbidden, and the harness implemented the forbidden one. **All
 three tasks in the first parallel batch lost a fix round to it**, each independently re-diagnosing the
 same failure.
 
-This repo is an npm workspace, so `$P/node_modules/@applygent/*` are symlinks into `$P/packages/*`.
-Sharing that directory makes a worktree compile its own `src/` against the MAIN checkout's copy of every
-workspace package, so an export added in the worktree appears not to exist:
+In an npm workspace, `$P/node_modules/<scope>/*` are symlinks into `$P/packages/*`. Sharing that
+directory makes a worktree compile its own `src/` against the MAIN checkout's copy of every workspace
+package, so an export added in the worktree appears not to exist:
 
 ```
-Module '"@applygent/shared"' has no exported member 'memoryPath'
+Module '"@your-scope/shared"' has no exported member 'somethingYouJustAdded'
 ```
 
 ...which reads as a code bug, is not one, and cannot be fixed from inside a contract's Allowed paths.
@@ -193,7 +202,7 @@ merely discouraged.
 | | shared tree | `worktree: true` |
 |---|---|---|
 | concurrent runs | one, others refused | many, one per branch |
-| macOS gate | contended — one generated `Applygent.xcodeproj` | isolated; xcodegen writes per-worktree, so DerivedData paths differ |
+| a generated project file | contended — one generated file for every run | isolated; the generator writes per-worktree, so build paths differ |
 | `node_modules` | present | a REAL per-worktree dir built by `link-workspace.sh` (never a symlink) |
 | on `done` | lock released | worktree removed, lock n/a |
 | on `blocked` | lock released | **worktree kept**, path in `result.worktree` |
@@ -247,7 +256,7 @@ An unattended run stalls forever on a permission prompt with nobody watching, so
 issues must be pre-approved in the **tracked** `.claude/settings.json`. Today the only allowlist is
 `.claude/settings.local.json`, which is user-local and gitignored — it exists on exactly one machine, and
 auditing it against `PIPELINE.md` turns up real gaps: `npm test` (`npm run:*` does not match it), `npx
-eslint`, `npx danger`, `swiftformat`, `swiftlint`, and `yamllint` are all missing, and each one stalls an
+eslint`, `npx danger`, and any other gate tool are all missing, and each one stalls an
 unattended run at Verify.
 
 The fix is a tracked `.claude/settings.json` granting exactly the gate's command set:
@@ -275,7 +284,7 @@ was written deliberately, reviewed in a PR, and grants only the gate's own comma
 An implementer that finds a second bug while fixing the first has three options, and two of them are
 bad. Fixing it is scope creep the auditor rejects. Mentioning it in the PR body loses it the moment
 the PR is merged — that is how APL-48 shipped a dead `escapeHtml()` carrying a comment that claims a
-caller which does not exist, and how `@applygent/rr-render`'s build script still swallows its own
+caller which does not exist, and how one package's build script still swallows its own
 `tsc` failures.
 
 So the third option is enforced: **record it, then file it.**
@@ -415,27 +424,38 @@ only actor that can actually reach Linear.
   open questions (they are still planned as a comment).
 
 
-## Gate tooling (repo root)
+## The gate is your repo's, not cycler's
 
-- `danger local` — deterministic diff review (Dangerfile). Requires `CONTRACT_PATH`.
-  **It exits 0 even when it fails the build** — it prints `Failing the build, there is 1 fail.` and
-  returns success. `gate.sh` greps for that and treats it as FAIL. Until then danger was ADVISORY: its
-  secrets / forbidden-paths / generated-files checks could not block a run. Never invoke it bare; go
-  through `gate.sh` (or `npm run gate:diff`, which delegates).
-- `swiftformat --lint apps/macOS`, `swiftlint lint apps/macOS`
-- `eslint <changed TS files>`, `yamllint config*.yaml apps/macOS/project.yml`
-- `npm run build` / `npm test` — TypeScript typecheck + tests
-- Applygent build/test via xcodegen + xcodebuild (see AGENTS.md; prefer `-only-testing:ApplygentTests/<Suite>`)
+`${CLAUDE_PLUGIN_ROOT}/harness/gate.sh` is a **resolver**. It runs `.claude/harness/gate.sh` from your
+repo whenever that exists, and cycler's `gate.default.sh` (lint/build/test from `package.json`)
+otherwise. It reports which one it chose on stderr, never on stdout — stdout is the output contract.
 
-## Why this harness and not flow-next (decided, 2026-09)
+Write your own by copying `gate.default.sh` and replacing the checks. What you inherit is the runner:
+argument handling, the changed-file sets, one line per passing check, and the pass marker the commit
+hook reads.
+
+Two rules a repo gate must keep:
+
+- **A check that cannot fail is not a check.** If nothing ran, report FAIL. cycler's default does
+  exactly this when a repo declares no `lint`/`build`/`test` script — a green "0 of 0" would make
+  every downstream stage treat an unverified diff as verified.
+- **Never trust a tool's exit code without checking.** `danger local` prints
+  `Failing the build, there is 1 fail.` and **exits 0**. Any gate wrapping it must grep for that.
+  Until the gate did, danger was advisory: its secrets and forbidden-path checks could not block a
+  run, while every report said they had.
+
+Checks too slow for the gate belong in `cycler.yaml` under `verify.steps`, gated on the paths that
+make them apply. The verify agent runs them; the gate stays fast.
+
+## Why this harness and not flow-next (decided 2026-09; see ADR 0002)
 
 flow-next was trialled head to head on APL-16 and then removed. The record, because the reasoning is
 worth more than the verdict:
 
 **It was better at deciding WHAT to build.** Its scout fan-out is keyed to a depth tier and forbids
 cherry-picking, so it read things a judgement-driven search skips: ADR 0031's counting rule,
-`AGENTS.md`'s no-disclosure position, and APL-57 making a snapshot test a trap. None were in the
-issue; our own contract for the same issue found none of them. Its provenance tags
+a repo policy that lived only in `AGENTS.md`, and a prior issue that had quietly made a snapshot
+test a trap. None were in the issue; our own contract for the same issue found none of them. Its provenance tags
 (`[user]`/`[paraphrase]`/`[inferred]`) then caught the issue's own stated cause being wrong — that
 idea now lives in `CONTRACT.md`.
 

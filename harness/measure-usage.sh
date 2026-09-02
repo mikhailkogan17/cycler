@@ -14,7 +14,7 @@
 set -uo pipefail
 # Historical logs from the previous orchestrator are archived here; a live poller session logs
 # through Claude Code itself (`claude logs <id>`), so this reads the archive by default.
-LOGS="${SESSION_LOGS_DIR:-$HOME/.linear-claude/archive/cyrus-session-logs}"
+LOGS="${SESSION_LOGS_DIR:-${CYCLER_HOME:-$HOME/.cycler}/archive/session-logs}"
 
 printf '%-9s %9s %9s %8s %8s %7s %7s\n' ISSUE CACHE-READ CREATE OUT TURNS AGENTS SESSNS
 for ISSUE in "$@"; do

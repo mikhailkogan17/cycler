@@ -35,7 +35,7 @@ function run(dir, file, env = {}) {
   }
 }
 
-// escapeHatch.paths is repo config now, not a hardcoded applygent path. Written to a temp file so
+// escapeHatch.paths is repo config now, not a hardcoded path. Written to a temp file so
 // the two cases below differ ONLY in the config — which is what makes the pair able to go red on a
 // hook that ignores it.
 function configWith(paths) {

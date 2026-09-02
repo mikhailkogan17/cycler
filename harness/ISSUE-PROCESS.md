@@ -3,7 +3,7 @@
 You are working a Linear issue in a git worktree. This repo uses a **contract-first harness**.
 Follow the process below. Do not improvise an investigate-then-edit loop.
 
-Read the issue with `~/bin/lin issue view <ISSUE>` — title and description are the spec. Below,
+Read the issue with `"${CLAUDE_PLUGIN_ROOT}/poller/lin" issue view <ISSUE>` — title and description are the spec. Below,
 `<ISSUE>` means that identifier (e.g. `APL-49`) and `<BASE>` the PR base branch, `main` unless the
 issue says otherwise. Run every command from the worktree root.
 
@@ -157,7 +157,7 @@ Contracts are gitignored; never commit `config.local.yaml`, `memory/profiles/`, 
 reliably connect in a dispatched session, and APL-54 discovered that the hard way — it ended its
 report with "please file this manually" and the finding then sat unfiled.
 
-Use `~/bin/lin` instead, which is a plain CLI and cannot half-connect:
+Use `${CLAUDE_PLUGIN_ROOT}/poller/lin` instead, which is a plain CLI and cannot half-connect:
 
 ```bash
 lin issue create --team APL --title '<the defect, stated>' --description '<evidence, file:line, why out of scope>'

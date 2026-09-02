@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # PreToolUse hook: a session may not write outside its own worktree.
 #
-# APL-54 wrote its entire feature into /Users/mikhailkogan/applygent -- three modified files and four
+# APL-54 wrote its entire feature into the MAIN checkout -- three modified files and four
 # new ones -- while its own worktree stayed clean, zero commits. It was
 # found only because an unrelated `git status` showed files nobody in this session had touched. A
 # `git add -A` at the wrong moment would have committed a stranger's half-finished feature to main

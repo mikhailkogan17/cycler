@@ -5,6 +5,11 @@ import { run } from './sim.mjs'
 import { makeResponder } from './stubs.mjs'
 import assert from 'node:assert'
 
+// Workspace linking is opt-in per repo (cycler.yaml: worktree.linkWorkspace). These cases are about
+// what an npm-workspace repo is told, so they opt in; test-repo-specifics-are-config.mjs covers the
+// unconfigured half — that no such step appears at all.
+const LINKED = { worktree: { linkWorkspace: true } }
+
 const REPO = '/repo'
 const base = { task: 'APL-99 do a thing', cwd: REPO, issueId: 'APL-99' }
 const WT = `${REPO}/.claude/worktrees/claude-APL-99`
@@ -28,7 +33,7 @@ const clean = { auditDirty: [false], verifyGreen: [true], reviewApproved: [true]
 
 await t('worktree mode points every repo-reading stage at the worktree, not the repo root', async () => {
   const { responder, prompts } = recordingResponder(clean)
-  const { result } = await run({ args: { ...base, worktree: true }, responder })
+  const { result } = await run({ args: { ...base, worktree: true, config: LINKED }, responder })
   assert.strictEqual(result.status, 'done', result.blockedReason || result.stage)
   // The stages that actually read and change code must all name the worktree.
   for (const label of ['implementer', 'verify-gate', 'committer:initial', 'pr-opener']) {
@@ -40,7 +45,7 @@ await t('worktree mode points every repo-reading stage at the worktree, not the 
 
 await t('the branch manager itself still operates on the main checkout', async () => {
   const { responder, prompts } = recordingResponder(clean)
-  await run({ args: { ...base, worktree: true }, responder })
+  await run({ args: { ...base, worktree: true, config: LINKED }, responder })
   const p = prompts['branch:claude/APL-99']
   // It must drive git against the repo root (that is where the worktree registry lives) and must be
   // told never to switch there — switching is what would corrupt a concurrent run.
@@ -69,7 +74,7 @@ await t('the refuter is told which tree to read (the APL-45 silent-drop bug)', a
     findings: [{ file: 'a.ts', title: 'x', severity: 'blocking', detail: 'd' }],
     reviewApproved: [true],
   })
-  await run({ args: { ...base, worktree: true }, responder })
+  await run({ args: { ...base, worktree: true, config: LINKED }, responder })
   const p = prompts['refute:a.ts']
   assert.ok(p, 'refuter never ran')
   assert.ok(p.includes(WT), 'refuter was not told the run working dir — it would read the unmodified main tree')
@@ -80,7 +85,7 @@ await t('the refuter must not report isReal:false merely because it cannot find 
     ...clean,
     findings: [{ file: 'a.ts', title: 'x', severity: 'blocking', detail: 'd' }],
   })
-  await run({ args: { ...base, worktree: true }, responder })
+  await run({ args: { ...base, worktree: true, config: LINKED }, responder })
   const p = prompts['refute:a.ts']
   // Without this instruction, "wrong tree" and "refuted" are the same answer, and real findings vanish.
   assert.ok(/do NOT return isReal:false/i.test(p), 'refuter may still silently drop a finding on a path miss')
@@ -150,7 +155,7 @@ await t('the lock instruction uses mkdir, the atomic test-and-set', async () => 
 
 await t('a clean worktree run removes its worktree', async () => {
   const { result, calls } = await run({
-    args: { ...base, worktree: true },
+    args: { ...base, worktree: true, config: LINKED },
     responder: makeResponder(clean),
   })
   assert.strictEqual(result.status, 'done')
@@ -160,7 +165,7 @@ await t('a clean worktree run removes its worktree', async () => {
 
 await t('a blocked worktree run KEEPS the worktree and reports where it is', async () => {
   const { result, calls } = await run({
-    args: { ...base, worktree: true },
+    args: { ...base, worktree: true, config: LINKED },
     responder: makeResponder({ auditDirty: [true, true, true], verifyGreen: [true] }),
   })
   assert.strictEqual(result.status, 'blocked')
@@ -199,7 +204,7 @@ await t('a cleanup that reports failure leaves lockHeld true and logs it', async
 
 await t('a worktree that fails to be removed is not reported as gone', async () => {
   const { result, logs } = await run({
-    args: { ...base, worktree: true },
+    args: { ...base, worktree: true, config: LINKED },
     responder: makeResponder({
       ...clean,
       cleanup: { lockReleased: true, worktreeRemoved: false, note: 'directory busy' },
@@ -210,7 +215,7 @@ await t('a worktree that fails to be removed is not reported as gone', async () 
 })
 
 await t('both modes announce which one is in effect', async () => {
-  const iso = await run({ args: { ...base, worktree: true }, responder: makeResponder(clean) })
+  const iso = await run({ args: { ...base, worktree: true, config: LINKED }, responder: makeResponder(clean) })
   assert.ok(iso.logs.some((l) => /isolated run/.test(l)), 'worktree mode did not announce itself')
   const shared = await run({ args: base, responder: makeResponder(clean) })
   assert.ok(shared.logs.some((l) => /shared-tree run/.test(l) && /worktree: true/.test(l)),
@@ -221,7 +226,7 @@ await t('both modes announce which one is in effect', async () => {
 
 await t('the worktree is given a node_modules, or the gate fails on missing modules', async () => {
   const { responder, prompts } = recordingResponder(clean)
-  await run({ args: { ...base, worktree: true }, responder })
+  await run({ args: { ...base, worktree: true, config: LINKED }, responder })
   const p = prompts['branch:claude/APL-99']
   assert.ok(/node_modules/.test(p), 'nothing makes node_modules reachable — every eslint/vitest check would fail')
   assert.ok(/ln -s/.test(p), 'node_modules is not linked into the worktree')
@@ -231,7 +236,7 @@ await t('the worktree is given a node_modules, or the gate fails on missing modu
 
 await t('worktree mode refuses --force when the branch is checked out elsewhere', async () => {
   const { responder, prompts } = recordingResponder(clean)
-  await run({ args: { ...base, worktree: true }, responder })
+  await run({ args: { ...base, worktree: true, config: LINKED }, responder })
   const p = prompts['branch:claude/APL-99']
   assert.ok(/ALREADY CHECKED OUT/.test(p), 'nothing handles a second run on the same branch')
   assert.ok(/Do NOT use --force/.test(p), '--force would put two runs on one branch')

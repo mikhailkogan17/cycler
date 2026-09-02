@@ -47,25 +47,25 @@ function fixture() {
     mkdirSync(join(root, side, 'packages', 'shared'), { recursive: true })
     mkdirSync(join(root, side, 'node_modules'), { recursive: true })
     writeFileSync(join(root, side, 'package.json'), JSON.stringify({ name: 'root', workspaces: ['packages/*'] }))
-    writeFileSync(join(root, side, 'packages', 'shared', 'package.json'), JSON.stringify({ name: '@applygent/shared' }))
+    writeFileSync(join(root, side, 'packages', 'shared', 'package.json'), JSON.stringify({ name: '@acme/shared' }))
   }
-  mkdirSync(join(root, 'main', 'node_modules', '@applygent'), { recursive: true })
-  symlinkSync('../../packages/shared', join(root, 'main', 'node_modules', '@applygent', 'shared'))
+  mkdirSync(join(root, 'main', 'node_modules', '@acme'), { recursive: true })
+  symlinkSync('../../packages/shared', join(root, 'main', 'node_modules', '@acme', 'shared'))
   writeFileSync(join(root, 'main', 'node_modules', 'lodash.js'), '// third party')
   return { root, main: join(root, 'main'), wt: join(root, 'wt') }
 }
-const mainShared = (f) => readlinkSync(join(f.main, 'node_modules', '@applygent', 'shared'))
+const mainShared = (f) => readlinkSync(join(f.main, 'node_modules', '@acme', 'shared'))
 
 t('link-workspace: a SYMLINKED scope dir must not be written through into the main checkout', () => {
   const f = fixture()
-  // The exact pre-state that corrupted the main checkout: wt/node_modules/@applygent -> main's.
-  symlinkSync(join(f.main, 'node_modules', '@applygent'), join(f.wt, 'node_modules', '@applygent'))
+  // The exact pre-state that corrupted the main checkout: wt/node_modules/@acme -> main's.
+  symlinkSync(join(f.main, 'node_modules', '@acme'), join(f.wt, 'node_modules', '@acme'))
   const before = mainShared(f)
   const r = sh('bash', [LINK, f.wt, f.main])
   assert.strictEqual(r.code, 0, `script failed: ${r.out}`)
   assert.strictEqual(mainShared(f), before,
     'the MAIN checkout was repointed at the worktree — the corruption AGENTS.md documents')
-  assert.ok(readlinkSync(join(f.wt, 'node_modules', '@applygent', 'shared')).startsWith(f.wt),
+  assert.ok(readlinkSync(join(f.wt, 'node_modules', '@acme', 'shared')).startsWith(f.wt),
     "the worktree's own link must point inside the worktree")
   rmSync(f.root, { recursive: true, force: true })
 })
@@ -78,7 +78,7 @@ t('link-workspace: a whole-node_modules symlink is replaced, not followed', () =
   const r = sh('bash', [LINK, f.wt, f.main])
   assert.strictEqual(r.code, 0, `script failed: ${r.out}`)
   assert.strictEqual(mainShared(f), before, 'main checkout must be untouched')
-  assert.ok(readlinkSync(join(f.wt, 'node_modules', '@applygent', 'shared')).startsWith(f.wt))
+  assert.ok(readlinkSync(join(f.wt, 'node_modules', '@acme', 'shared')).startsWith(f.wt))
   rmSync(f.root, { recursive: true, force: true })
 })
 
@@ -89,7 +89,7 @@ t('link-workspace: running it twice is safe and still correct', () => {
   const r = sh('bash', [LINK, f.wt, f.main])
   assert.strictEqual(r.code, 0, `second run failed: ${r.out}`)
   assert.strictEqual(mainShared(f), before)
-  assert.ok(readlinkSync(join(f.wt, 'node_modules', '@applygent', 'shared')).startsWith(f.wt))
+  assert.ok(readlinkSync(join(f.wt, 'node_modules', '@acme', 'shared')).startsWith(f.wt))
   rmSync(f.root, { recursive: true, force: true })
 })
 
@@ -157,14 +157,14 @@ t('gate.sh: a non-.swift change under apps/macOS still gates the Swift suite', (
   // baseline, is exactly that diff. APL-57 re-recorded a baseline and --full reported PASS having run
   // no Swift test at all. The suite's inputs are wider than its sources: baselines, fixtures, Assets,
   // project.yml. A check that cannot run on the change it is about is not a check.
-  execSync('mkdir -p apps/macOS/ApplygentTests/Support/Fixtures', { cwd: root })
-  writeFileSync(join(root, 'apps/macOS/ApplygentTests/Support/Fixtures/stats.json'), '{}\n')
+  execSync('mkdir -p apps/macOS/AppTests/Support/Fixtures', { cwd: root })
+  writeFileSync(join(root, 'apps/macOS/AppTests/Support/Fixtures/stats.json'), '{}\n')
 
   // xcodebuild is hidden, so the check cannot actually run — the point is WHICH skip is reported.
   // "no changed apps/macOS files" means the gate never considered it; anything else means it did.
   const r = sh('bash', [GATE, '--full', '--only', 'swift-tests'],
     { cwd: root, env: { ...process.env, PATH: '/usr/bin:/bin', CONTRACT_PATH: 'x.md' } })
-  // cycler's DEFAULT gate has no Swift checks — this case is about a repo gate that does (applygent's).
+  // cycler's DEFAULT gate has no Swift checks — this case is about a repo gate that does.
   // Without this guard the assertions below would pass vacuously against the default, which is
   // precisely the kind of green-that-cannot-go-red the rest of this file exists to catch.
   if (/matched no check/.test(r.out)) skip('the gate under test has no swift-tests check')
