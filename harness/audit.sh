@@ -44,7 +44,11 @@ if [ "${AUDIT_NO_CACHE:-0}" != "1" ] && [ -f "$STAMP" ] && [ "$(cat "$STAMP" 2>/
 fi
 
 # Changed files: committed against the base, plus anything still in the working tree.
-CHANGED=$( { git diff --name-only "$REF"...HEAD; git status --porcelain | sed 's/^...//'; } | sed '/^$/d' | sort -u )
+# -uall is load-bearing: without it `git status --porcelain` collapses a wholly-untracked directory to
+# a single "tests/" entry. Every path check here compares against FILE globs, so a run that adds a new
+# file inside a new directory was reported as touching a path outside Allowed paths — naming a
+# directory the contract could not have listed. Another false DIRTY indistinguishable from a real one.
+CHANGED=$( { git diff --name-only "$REF"...HEAD; git status --porcelain -uall | sed 's/^...//'; } | sed '/^$/d' | sort -u )
 
 # Contract sections are bullet lists of globs; read until the next heading.
 # Take the backticked path out of each bullet. Contracts label entries ("New: `a/b.swift`",
@@ -64,6 +68,40 @@ section() {
     | sed 's/ *#.*//' | sed '/^$/d'
 }
 ALLOWED=$(section "Allowed paths"); FORBIDDEN=$(section "Forbidden paths")
+EXPECTED_FILES=$(section "Files expected to change")
+
+# APL-65: a Forbidden bullet is often a broad glob with a prose exception —
+#   "any test file NOT listed under Files expected to change (... and every other `apps/x/Tests/*`)"
+# section() reads declarations, not sentences, so it cannot see the qualifier and applied the glob
+# unconditionally. audit.sh then reported forbidden-paths DIRTY on the very files the SAME contract's
+# Allowed paths, Files expected to change and acceptance checks all required the run to modify.
+#
+# That is a false DIRTY indistinguishable from a real scope violation, which is the failure this
+# script's own comments call worse than no check at all.
+#
+# The rule is deliberately narrow: an EXACT path under "Files expected to change" beats a forbidden
+# pattern containing a wildcard. It never beats an exact forbidden path — "never touch this specific
+# file" stays absolute, or the Files-expected list becomes a way to launder any path.
+forbid_reason() {  # $1 = path; echoes the matching forbid glob, or nothing
+  local p="$1" g
+  while IFS= read -r g; do
+    [ -n "$g" ] || continue
+    case "$p" in $g) printf '%s' "$g"; return 0 ;; esac
+  done <<< "$FORBIDDEN"
+  return 1
+}
+is_expected() {  # $1 = path; exact (not glob) membership of "Files expected to change"
+  [ -n "$EXPECTED_FILES" ] && printf '%s\n' "$EXPECTED_FILES" | grep -Fxq -- "$1"
+}
+is_forbidden() {  # $1 = path
+  local g
+  g="$(forbid_reason "$1")" || return 1
+  case "$g" in
+    *'*'*|*'?'*|*'['*)  # a pattern: an explicit listing overrides it
+      is_expected "$1" && return 1 ;;
+  esac
+  return 0
+}
 
 matches_any() {  # $1 = path, $2 = newline-separated globs
   local p="$1" g
@@ -88,7 +126,7 @@ outside=""; forbidden=""; generated=""
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   [ -n "$ALLOWED" ] && ! matches_any "$f" "$ALLOWED" && outside="$outside$f"$'\n'
-  [ -n "$FORBIDDEN" ] && matches_any "$f" "$FORBIDDEN" && forbidden="$forbidden$f"$'\n'
+  [ -n "$FORBIDDEN" ] && is_forbidden "$f" && forbidden="$forbidden$f"$'\n'
   case "$f" in
     node_modules/*|dist/*|build/*|*.log|.env*|config.local.yaml*|memory/profiles/*|memory/cvs/*|memory/apply-logs/*)
       generated="$generated$f"$'\n' ;;

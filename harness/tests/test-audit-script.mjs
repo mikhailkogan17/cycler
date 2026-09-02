@@ -91,4 +91,72 @@ check("editing the contract the run is judged against is DIRTY", () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+// ---- APL-65: an explicit listing beats a forbidden WILDCARD, but never an exact forbid ----------
+//
+// A contract's Forbidden section legitimately carries broad globs with prose exceptions:
+//   "any test file NOT listed under Files expected to change (... and every other `apps/x/Tests/*`)"
+// section() cannot read the qualifier, so the glob was applied unconditionally and audit.sh reported
+// forbidden-paths DIRTY on the very files the same contract's Allowed paths, Files expected to change
+// AND acceptance checks all required the task to modify.
+//
+// That is the failure this script's own comments warn about, one level up: a false DIRTY that looks
+// exactly like a real scope violation and trains the next reader to skim past the line.
+//
+// Narrow rule, so the check keeps its teeth: an EXACT path under "Files expected to change" wins over
+// a forbidden pattern containing a wildcard. It never wins over an exact forbidden path — "never
+// touch this specific file" stays absolute.
+
+check("an explicitly listed file beats a forbidden WILDCARD", () => {
+  const dir = repo(
+    "## Allowed paths\n\n- `src/a.ts`\n- `tests/keep.test.ts`\n\n" +
+    "## Forbidden paths\n\n- any test file NOT listed below (in particular `tests/*`)\n\n" +
+    "## Files expected to change\n\n- `src/a.ts` — the fix\n- `tests/keep.test.ts` — its regression test\n",
+    ["src/a.ts", "tests/keep.test.ts"]);
+  const out = run(dir, false);
+  assert(/forbidden-paths *clean/.test(out), "a file the contract explicitly lists was reported forbidden:\n" + out);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+check("an UNlisted file matching the same wildcard is still forbidden", () => {
+  // The other direction. Without it, the rule above could be implemented by dropping wildcard
+  // forbids altogether, and the check would pass while enforcing nothing.
+  const dir = repo(
+    "## Allowed paths\n\n- `src/a.ts`\n- `tests/*`\n\n" +
+    "## Forbidden paths\n\n- any test file NOT listed below (in particular `tests/*`)\n\n" +
+    "## Files expected to change\n\n- `src/a.ts` — the fix\n",
+    ["src/a.ts", "tests/sneaky.test.ts"]);
+  const out = run(dir, true);
+  assert(/forbidden-paths *DIRTY/.test(out), "an unlisted file matching a forbidden glob passed:\n" + out);
+  assert(/sneaky/.test(out), "the offending path was not named:\n" + out);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+check("an EXACT forbidden path still wins over an explicit listing", () => {
+  // A contract that lists a file it also forbids by exact path is contradicting itself deliberately.
+  // Forbid wins: "never touch this specific file" must stay absolute, or the escape becomes a way to
+  // launder any path through the Files-expected list.
+  const dir = repo(
+    "## Allowed paths\n\n- `src/a.ts`\n\n" +
+    "## Forbidden paths\n\n- `package.json`\n\n" +
+    "## Files expected to change\n\n- `src/a.ts` — the fix\n- `package.json` — should NOT be allowed\n",
+    ["src/a.ts", "package.json"]);
+  const out = run(dir, true);
+  assert(/forbidden-paths *DIRTY/.test(out), "an exact forbid was overridden by a listing:\n" + out);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+check("a new file in a NEW directory is judged as a file, not as its directory", () => {
+  // `git status --porcelain` collapses a wholly-untracked directory to one "tests/" entry, and every
+  // check here compares against FILE globs. So adding a new file in a new directory reported
+  // allowed-paths DIRTY, naming a directory no contract could have listed. -uall fixes it.
+  const dir = repo(
+    "## Allowed paths\n\n- `src/deep/new.ts`\n\n## Forbidden paths\n\n- `package.json`\n\n" +
+    "## Files expected to change\n\n- `src/deep/new.ts` — a new file in a new directory\n",
+    ["src/deep/new.ts"]);
+  const out = run(dir, false);
+  assert(!/src\/deep\/$/m.test(out), "a directory was reported instead of the file:\n" + out);
+  assert(/allowed-paths *clean/.test(out), "a listed file in a new directory read as out of scope:\n" + out);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 process.exit(failed ? 1 : 0);
