@@ -89,6 +89,15 @@ t('1.5 a refresh response omitting refresh_token MERGES, keeping the old one', (
 });
 
 // ─── §2 Selection ─────────────────────────────────────────────────────────────
+t('2.1 issues are selected by delegate, never assignee', () => {
+  // The trap that wastes the most time: assigning is a different field that looks correct in the UI
+  // and dispatches nothing. Asserted on the wire, because this is the one place it is observable.
+  const p = poll({ script: { issues: [] } });
+  const q = p.issuesQueries[0].query;
+  assert.match(q, /delegate:\s*\{\s*id:\s*\{\s*eq:/, 'the issue filter is not on delegate');
+  assert.doesNotMatch(q, /assignee/, 'the query filters on assignee — which dispatches nothing');
+});
+
 // Both directions on purpose: a poller that dispatched NOTHING would pass "completed is skipped".
 t('2.2 a completed issue is skipped and a started one is dispatched', () => {
   const done = poll({ script: { issues: [issue({ stateType: 'completed' })] }, cfg: dispatchCfg });
@@ -186,10 +195,18 @@ t('a comment failure after a successful spawn must not cause a re-dispatch', () 
     'the session was spawned but the issue is NOT marked processed: the next poll spawns a SECOND session on the same issue and branch');
 });
 
-t('a missing repo.path fails ONE issue, and says so on the issue', () => {
-  const p = poll({ script: { issues: [issue()] }, cfg: (r) => dispatchCfg('repo:\n  path: /nonexistent/repo\n') });
-  assert.strictEqual(p.comments.length, 1,
-    'nothing was posted: the poll aborted before the failure comment, so the issue sits delegated in silence');
+t('a missing repo.path fails each issue with a comment, and never silences the poll', () => {
+  // The bug was that the check threw from OUTSIDE the per-issue try, so it escaped poll() at the
+  // first issue. Two issues, so "aborted the loop" and "handled each one" are distinguishable —
+  // with one issue both behaviours look the same from the outside.
+  const p = poll({
+    script: { issues: [issue({ id: 'uuid-1', identifier: 'ABC-1' }), issue({ id: 'uuid-2', identifier: 'ABC-2' })] },
+    cfg: () => dispatchCfg('repo:\n  path: /nonexistent/repo\n'),
+  });
+  assert.strictEqual(p.comments.length, 2,
+    `only ${p.comments.length} of 2 issues was told anything — the poll aborted mid-loop and the rest sit delegated in silence`);
+  for (const c of p.comments) assert.match(c.variables.body, /Dispatch failed/);
+  assert.ok(!(p.state || []).length, 'an issue that never dispatched was marked processed');
 });
 
 process.exit(fails ? 1 : 0);
