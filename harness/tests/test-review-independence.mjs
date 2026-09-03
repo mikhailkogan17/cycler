@@ -38,7 +38,10 @@ const STATES_THE_RULE = ['harness/CLAUDE.reference.md', 'harness/ROUTING.md', 'h
 const WINDOW = 600;  // characters after the prohibition — about one bullet or paragraph
 
 function carveOutNear(plain) {
-  const bans = [...plain.matchAll(/(no|never|not) [^.\n]{0,60}subagents?/gi)];
+  // Anchor on every mention of the rule, not on one phrasing of it. ROUTING.md states it as "not a
+  // locally-spawned agent" and never puts a negation next to the word "subagent" — a narrower
+  // anchor skipped the file entirely and reported it clean with its carve-out deleted.
+  const bans = [...plain.matchAll(/subagents?|locally-spawned agent/gi)];
   if (!bans.length) return { banned: false };
   for (const b of bans) {
     const passage = plain.slice(b.index, b.index + WINDOW);
@@ -66,6 +69,11 @@ await t('the proximity check can actually fail', () => {
   // which is precisely the pre-#2 state it was written to detect.
   const pre = 'Rules\n- One workflow, always. No ad-hoc parallel subagents, no per-stage workflows.\n' +
     '- Audit is independent.\n' + 'x'.repeat(2000) + '\nThis does not apply to several runs at once.';
+  // ...and the phrasing that has no negation beside the word, which is how ROUTING.md states it.
+  const routing = 'Start work with lin-delegate, not a locally-spawned agent. A subagent records\n' +
+    'nothing outside the conversation that spawned it.\n' + 'x'.repeat(2000) + '\nAudit does not apply.';
+  assert.strictEqual(carveOutNear(routing).ok, false,
+    'a file stating the rule without the word-adjacent negation was not even checked');
   const r = carveOutNear(pre);
   assert.ok(r.banned, 'the prohibition was not even recognised');
   assert.strictEqual(r.ok, false, 'un-carved text passed the proximity check — the check cannot go red');
