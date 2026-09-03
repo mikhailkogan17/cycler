@@ -58,6 +58,16 @@ node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" repo.path ""
    defaults, which are the values shown in those commands — nothing breaks, nothing is silently
    shaped like somebody else's repo.
 
+**The workflow's audit and review stages are subagents, and you must let them run.** A repo may carry a
+rule against spawning subagents to work an issue — that rule is about not spawning a local agent
+*instead of delegating a separate issue*, and it is never about your own run's auditor, review lenses
+or refuters. Those are the only readers in the run that did not write the diff.
+
+If any of them genuinely could not run, the run is **not** complete: say so in the PR body and in the
+Linear comment, in those words — "review self-performed, not independent" — so nobody reads an
+unreviewed diff as a reviewed one. Do not quietly substitute your own judgement for the lenses and
+report it as a clean review.
+
 5. Call the single workflow:
 
 ```js

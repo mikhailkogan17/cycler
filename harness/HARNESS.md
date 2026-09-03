@@ -60,8 +60,10 @@ contract/scope-creep lenses cover compliance.
   `package.json`) — changing the gate or contract to dodge a red check is itself a blocking scope
   violation. The auditor verifies the contract file is unchanged. Gate tooling and tests are in the
   CONTRACT.md default Forbidden paths.
-- **One workflow, always.** No ad-hoc parallel subagents, no per-stage workflows. `/task` calls
-  `task-orchestration` once. This constrains the shape of a single run; it does not forbid running
+- **One workflow, always.** No ad-hoc parallel subagents *of your own*, no per-stage workflows;
+  `/task` calls `task-orchestration` once. This constrains what the DRIVER spawns. The workflow's own
+  auditor, review lenses and refuters are subagents and are never what this forbids — read as a ban on
+  those, it removes the only independent reader in the run. This constrains the shape of a single run; it does not forbid running
   several independent `/task` runs at the same time — see **Concurrency** below for the terms.
 - **One tree, one run.** (APL-45) A working tree may host exactly one run. Enforced, not trusted: a
   shared-tree run takes an exclusive lock and a second one is refused with the holder named; a

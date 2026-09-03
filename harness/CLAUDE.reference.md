@@ -49,6 +49,13 @@ For anything else — a question, a one-line fix, exploration — just do the wo
   locally-spawned agent leaves none: its worktree, findings and reasoning die with the conversation
   that started it. Note the trigger is the **delegate** field; `--assignee` is a different field and
   dispatches nothing while looking right.
+
+  **This does not forbid the workflow's own stages.** `task-orchestration` dispatches an independent
+  auditor and four review lenses, and those are subagents by design — an adversary that did not write
+  the diff is the single most valuable thing the harness does. The rule above is about not spawning a
+  local agent *instead of delegating a separate issue*, because that agent's worktree, findings and
+  reasoning die with the conversation and the board never learns the work happened. Running your own
+  run's audit and review is the opposite: it is the run doing its job.
   <!-- [your repo]: add a one-liner here for however you set the delegate. -->
 
 ## Repo-specific hazards
