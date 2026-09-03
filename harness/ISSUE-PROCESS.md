@@ -38,11 +38,19 @@ every later stage useless.
 stop here, post the specific open questions as your reply, and do not implement. A guess costs more
 than a question.
 
+The Workflow tool can only run a script it can already read — the working directory or a directory
+the session has been given — so a path inside the plugin is REFUSED:
+
+    scriptPath must be a script path this tool returned, or a file you can already read ...
+
+`/cycler:setup` therefore copies the workflow into the repo at `.claude/workflows/`. If that file is
+missing, run `/cycler:setup`; do not substitute a plugin path, it will not run.
+
 **Escape hatch:** if the contract's "Files expected to change" exceeds ~8 files, or touches
 `apps/macOS/**`, do NOT continue inline. Run the full workflow instead and skip to step 7:
 
 ```js
-Workflow({ scriptPath: "${CLAUDE_PLUGIN_ROOT}/workflows/task-orchestration.js", args: {
+Workflow({ scriptPath: ".claude/workflows/task-orchestration.js", args: {
   contractPath: "<the contract you just wrote>", cwd: process.cwd(),
   issueId: "<ISSUE>", branch: "<BRANCH>", prBase: "<BASE>",
   worktree: false, linear: false

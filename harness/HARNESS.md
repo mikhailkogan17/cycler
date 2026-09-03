@@ -8,7 +8,7 @@ finding it refers to, in the same paragraph — the key is a citation marker, th
 point. See *Why the comments cite issue keys* in the README.
 
 **The orchestrator is the frontier model and decides for itself.** All task work runs in ONE workflow,
-`task-orchestration` (`${CLAUDE_PLUGIN_ROOT}/workflows/task-orchestration.js`, invoked via `Workflow({ scriptPath: '${CLAUDE_PLUGIN_ROOT}/workflows/task-orchestration.js', args })`). The orchestrator dispatches each
+`task-orchestration` (`.claude/workflows/task-orchestration.js`, invoked via `Workflow({ scriptPath: '.claude/workflows/task-orchestration.js', args })`). The orchestrator dispatches each
 stage to any available model **lower than its own** via `args.executorModel`; omit to inherit.
 
 **Available models, ordered strong → weak:** `opus` → `sonnet` → `haiku`/`fable`.

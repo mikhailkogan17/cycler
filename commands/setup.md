@@ -41,7 +41,29 @@ Copy `${CLAUDE_PLUGIN_ROOT}/cycler.example.yaml` to the repo root as `cycler.yam
 `repo.path` (this repo's absolute path) and `repo.base` (the PR base branch). Ask the user before
 changing anything else — the defaults are the values that work.
 
-## 4. Enable the hooks
+## 4. Install the workflow into the repo
+
+```bash
+mkdir -p .claude/workflows
+cp "${CLAUDE_PLUGIN_ROOT}/workflows/task-orchestration.js" .claude/workflows/task-orchestration.js
+```
+
+**This copy is not optional and not vendoring by preference.** The `Workflow` tool only runs a script
+it can already read — the working directory, or a directory the session has been given — so a path
+inside the plugin is refused outright:
+
+```
+scriptPath must be a script path this tool returned, or a file you can already read
+(the working directory or a directory you have added): .../cycler/workflows/task-orchestration.js
+```
+
+Without this file, the escape hatch prints an instruction no run can follow, and a blocked run's only
+remaining move is to waive the guard. That happened.
+
+Commit it, or gitignore it and re-run `/cycler:setup` after each plugin upgrade — but say which, and
+tell the user, because a stale copy here is a workflow that silently differs from the plugin's.
+
+## 5. Enable the hooks
 
 The four `PreToolUse` hooks ship with the plugin and load automatically. Confirm they are active by
 checking that this prints a path:
@@ -50,7 +72,7 @@ checking that this prints a path:
 ls "${CLAUDE_PLUGIN_ROOT}/harness/hooks/"
 ```
 
-## 5. The gate
+## 6. The gate
 
 cycler does not own your gate — it always depends on the repo and the stack. Check which one
 resolves:
@@ -63,7 +85,7 @@ The first stderr line says whether it used the repo's own `.claude/harness/gate.
 default. If it used the default and the repo has real checks to run, tell the user to copy
 `${CLAUDE_PLUGIN_ROOT}/harness/gate.default.sh` to `.claude/harness/gate.sh` and add them.
 
-## 6. Verify one poll
+## 7. Verify one poll
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/poller/poller.mjs"

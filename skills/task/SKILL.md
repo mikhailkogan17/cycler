@@ -61,7 +61,7 @@ node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" repo.path ""
 5. Call the single workflow:
 
 ```js
-Workflow({ scriptPath: '${CLAUDE_PLUGIN_ROOT}/workflows/task-orchestration.js', args: {
+Workflow({ scriptPath: '.claude/workflows/task-orchestration.js', args: {
   task: '<the user request verbatim — or, for a Linear reference, the resolved issue title + description>',
   cwd: '<repo root>',
   executorModel: '<lower Claude model id like "sonnet"/"haiku", or omit to inherit>',
