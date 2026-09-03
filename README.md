@@ -1,6 +1,13 @@
-# cycler
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo-light.png">
+    <img src="docs/assets/logo-light.png" width="620"
+         alt="cycler — a loop: the board hands work to the agent, the agent hands a pull request back to the board.">
+  </picture>
+</p>
 
-Delegate a Linear issue to Claude and get a gated pull request back.
+<p align="center"><b>Delegate a Linear issue to Claude and get a gated pull request back.</b></p>
 
 A poller on your own machine watches Linear for issues delegated to a Claude agent. When one appears
 it starts a background Claude Code session in your repo. That session writes a contract, implements
