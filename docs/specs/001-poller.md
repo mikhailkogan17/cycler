@@ -9,8 +9,16 @@
 | 1.1 | OAuth uses `actor=app`, so board comments come from the agent, not the user | — untested (needs a live Linear app) |
 | 1.2 | Scopes are `read,write,app:assignable,app:mentionable` | — untested |
 | 1.3 | The callback binds `localhost:8787` only while the flow is open | — untested |
+| 1.6 | `state` is a per-run nonce and a callback that does not carry it is refused | `test-oauth-callback.mjs` |
+| 1.7 | `token.json` is written mode 0600 | `test-oauth-callback.mjs` |
 | 1.4 | On `AUTHENTICATION_ERROR`, the token is refreshed once and the query retried | `test-poller-live.mjs` |
 | 1.5 | A refresh response is **merged** into the stored token, never replaces it | `test-poller-live.mjs` |
+
+1.6 was a real weakness. `state` was the constant string `cycler` and the callback read only `code`,
+so it was neither a nonce nor verified — while the comment beside it called it an anti-CSRF nonce.
+`localhost:8787` answers a request from whatever page the browser is on for as long as the flow is
+open, so an unchecked callback lets someone else's `code` be exchanged and stored: the poller then
+holds a token for **their** workspace, and every issue it dispatches comes from a board they control.
 
 1.5 is load-bearing. Linear access tokens expire in 24h (`expires_in: 86399`) and a refresh response
 may omit `refresh_token`; dropping it makes the *next* refresh impossible, so the poller works for a

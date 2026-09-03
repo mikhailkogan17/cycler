@@ -25,6 +25,15 @@ dispatch:
   # The whole command, as a template: {workflow} {issue} {title} {url} {session}.
   # Do NOT add --print: it conflicts with --background and claude exits 1, which looks exactly like
   # "the agent never saw the issue".
+  #
+  # Keep {title} out of an argument of its own. Placeholders are substituted AFTER the template is
+  # split into arguments, so a title can never introduce an EXTRA argument — but it still controls
+  # the CONTENT of the one it lands in, and an argument that is entirely a title starts with
+  # whatever the title starts with. A title of "--dangerously-skip-permissions" placed as a bare
+  # {title} token becomes exactly that flag. The default is safe because {session} is always
+  # "[KEY] <title>", so the argument can never begin with a dash. Anyone who can delegate already
+  # has shell-equivalent access to this machine (see the Security section of the README), so this is
+  # not an escalation — it is a footgun worth not building into your own template.
   command: >
     claude --background --name "{session}" --remote-control "{session}"
     --remote-control-session-name-prefix linear --permission-mode auto
