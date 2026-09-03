@@ -276,13 +276,22 @@ async function dispatch(issue) {
     });
   });
   child.unref();
-  await comment(
-    issue.id,
-    `⚡ Dispatched "${sessionName}"${sessionId ? ` — session \`${sessionId}\`` : ''} in \`${REPO_PATH}\`` +
-      `\n\n**Route:** \`${workflow}\` — ${why}` +
-      `\n\nWatch it: \`claude attach ${sessionId || '<id>'}\` · \`claude logs ${sessionId || '<id>'}\``
-  );
   log(`dispatched ${issue.identifier} workflow=${workflow} session=${sessionId || 'unknown'}`);
+  // The session is already running. A failure to ANNOUNCE it must not be reported as a failure to
+  // dispatch it: the caller marks an issue processed only when dispatch() resolves, so throwing here
+  // leaves a live session with the issue still unprocessed, and the next poll (180s) spawns a SECOND
+  // session on the same issue and the same branch. A missing comment is cosmetic; two concurrent runs
+  // on one branch is the corruption the one-tree-one-run rule exists to prevent.
+  try {
+    await comment(
+      issue.id,
+      `⚡ Dispatched "${sessionName}"${sessionId ? ` — session \`${sessionId}\`` : ''} in \`${REPO_PATH}\`` +
+        `\n\n**Route:** \`${workflow}\` — ${why}` +
+        `\n\nWatch it: \`claude attach ${sessionId || '<id>'}\` · \`claude logs ${sessionId || '<id>'}\``
+    );
+  } catch (err) {
+    logErr(`dispatched ${issue.identifier} but could not comment: ${err.message}`);
+  }
 }
 
 async function poll() {
@@ -302,8 +311,12 @@ async function poll() {
   for (const issue of issues.nodes) {
     if (processed.has(issue.id)) continue;
     if (['completed', 'canceled'].includes(issue.state?.type)) continue;
-    if (!existsSync(REPO_PATH)) throw new Error(`REPO_PATH not found: ${REPO_PATH}`);
     try {
+      // Inside the try on purpose. Thrown from out here it escaped poll() entirely, so a mistyped
+      // repo.path aborted the whole poll before the failure comment below and every delegated issue
+      // sat in silence — the exact "indistinguishable from never seeing the issue" state that the
+      // failure comment exists to prevent.
+      if (!existsSync(REPO_PATH)) throw new Error(`REPO_PATH not found: ${REPO_PATH}`);
       await dispatch(issue);
       processed.add(issue.id);
       changed = true;
