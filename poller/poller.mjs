@@ -29,6 +29,7 @@
 import { spawn, exec } from 'node:child_process';
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { realpathSync } from 'node:fs';
@@ -114,7 +115,9 @@ async function refreshToken() {
   if (!data.access_token) return false;
   // Merge: a refresh response may omit refresh_token, and dropping it would make the NEXT refresh
   // impossible — turning a self-healing poller into one that dies 24h later.
-  writeFileSync(TOKEN_PATH, JSON.stringify({ ...tok, ...data }, null, 2));
+  // 0600 to match poller/lin, which already chmods it. writeFileSync's default is 0644, so a
+  // token first written here was world-readable until something else happened to tighten it.
+  writeFileSync(TOKEN_PATH, JSON.stringify({ ...tok, ...data }, null, 2), { mode: 0o600 });
   log('token refreshed (expires_in', data.expires_in, 's)');
   return true;
 }
@@ -145,6 +148,13 @@ async function auth() {
   if (!cfg?.clientId || !cfg?.clientSecret) {
     throw new Error(`Missing ${CONFIG_PATH} with { "clientId", "clientSecret" }`);
   }
+  // A real nonce, and one that is actually checked below. This used to be the constant string
+  // 'cycler', with the callback reading only `code` — so it was neither a nonce nor verified, while
+  // the comment claimed CSRF protection. While the flow is open, localhost:8787 accepts a request
+  // from any page the browser is on, so an unchecked callback lets an attacker's `code` be exchanged
+  // and stored: the poller ends up holding a token for the ATTACKER's workspace, and every issue it
+  // then dispatches comes from a board they control. The window is short; the consequence is not.
+  const state = randomBytes(16).toString('hex');
   const url =
     'https://linear.app/oauth/authorize' +
     `?client_id=${cfg.clientId}` +
@@ -152,12 +162,18 @@ async function auth() {
     '&response_type=code' +
     `&scope=${encodeURIComponent(SCOPES)}` +
     '&actor=app' + // app acts as itself ("Claude"), not as you
-    '&state=cycler'; // OAuth anti-CSRF nonce; echoed back on the callback
+    `&state=${state}`;
 
   const server = createServer(async (req, res) => {
     const u = new URL(req.url, 'http://localhost:8787');
     if (u.pathname !== '/callback') { res.end('ignored'); return; }
     try {
+      // Constant-time, and length-checked first: timingSafeEqual throws on a length mismatch.
+      const got = Buffer.from(u.searchParams.get('state') || '');
+      const want = Buffer.from(state);
+      if (got.length !== want.length || !timingSafeEqual(got, want)) {
+        throw new Error('state mismatch — this callback did not come from the authorisation this process started');
+      }
       const body = new URLSearchParams({
         grant_type: 'authorization_code',
         client_id: cfg.clientId,
@@ -168,7 +184,7 @@ async function auth() {
       const r = await fetch('https://api.linear.app/oauth/token', { method: 'POST', body });
       const data = await r.json();
       if (!data.access_token) throw new Error(JSON.stringify(data));
-      writeFileSync(TOKEN_PATH, JSON.stringify(data, null, 2));
+      writeFileSync(TOKEN_PATH, JSON.stringify(data, null, 2), { mode: 0o600 });
       res.end('Claude installed in your workspace. You can close this tab.');
       console.log('Token saved to', TOKEN_PATH);
     } catch (err) {
@@ -181,7 +197,9 @@ async function auth() {
   });
   server.listen(8787, () => {
     console.log('Authorize Claude:', url);
-    exec(`open "${url}"`); // macOS
+    // CYCLER_NO_BROWSER exists so the flow can be driven without a browser — by a test, and by anyone
+    // running setup over ssh, where `open` puts the page on the wrong machine.
+    if (!process.env.CYCLER_NO_BROWSER) exec(`open "${url}"`); // macOS
   });
 }
 
