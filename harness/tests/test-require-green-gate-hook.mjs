@@ -9,7 +9,7 @@
 // Every case asserts both directions. A hook that denied everything would pass "an ungated commit is
 // blocked", and a hook that allowed everything would pass "a gated commit is allowed".
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -104,4 +104,26 @@ check('the hook does not fire outside a .claude/worktrees path', () => {
 });
 
 rmSync(ROOT, { recursive: true, force: true });
+check('the gate and the hook compute the fingerprint with the SAME script', () => {
+  // Spec 003 §3.6. This row cited a test that asserted nothing about it, which is how the two
+  // implementations drifted in the first place: the gate had its own inline computation, the hook had
+  // another, and `git add` changed one but not the other — so the ordinary gate → stage → commit
+  // sequence could never pass while the message blamed an edit nobody made.
+  //
+  // Mechanical on purpose. The failure was two copies existing at all, so what must stay true is that
+  // there is one script and everyone calls it — not that today's two copies happen to agree.
+  const callers = [
+    'harness/hooks/require-green-gate.sh',
+    'harness/gate.default.sh',
+    '.claude/harness/gate.sh',
+  ];
+  for (const f of callers) {
+    const src = readFileSync(join(HERE, '..', '..', f), 'utf8');
+    assert(/tree-fingerprint\.sh/.test(src), `${f} does not use the shared fingerprint script`);
+    // An inline shasum over a diff is the shape of the old bug returning.
+    const inline = /git diff[^\n]*\|[^\n]*shasum|shasum[^\n]*git diff/.test(src.replace(/^\s*#.*$/gm, ''));
+    assert(!inline, `${f} computes a fingerprint inline instead of calling the shared script`);
+  }
+});
+
 process.exit(failed ? 1 : 0);

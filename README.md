@@ -38,7 +38,7 @@ In Claude Code:
 `/cycler:setup` walks the Linear OAuth application, runs the authorisation, writes `cycler.yaml`, and
 verifies one poll. `/cycler:start-polling` installs the launchd job.
 
-Check it any time with `/cycler:doctor`, which tests the six things that actually break rather than a
+Check it any time with `/cycler:doctor`, which tests the seven things that actually break rather than a
 generic checklist.
 
 Then, in Linear, **delegate** an issue to the Claude agent. Delegate, not assign — they are different
@@ -93,10 +93,16 @@ PR → Review → Follow-ups → Cleanup**.
   findings get an adversarial refuter, and only the lens that raised one is re-run after a fix.
 - **Follow-ups become tracked issues**, not paragraphs in a PR description nobody reads.
 
-The rule underneath all of it: **green is only evidence if the check could have gone red.** Six
+The rule underneath all of it: **green is only evidence if the check could have gone red.** Eight
 checks in this harness's history turned out to be incapable of failing on the input they judged — a
 predicate that returned a literal `true`, a cross-language check that matched its own doc comment, a
-Swift gate that skipped Swift. Each of them looked green for weeks.
+Swift gate that skipped Swift, a config-driven test whose config was never loaded.
+
+The most instructive one is the most recent: a test written specifically to prove a fix was present
+could not detect that fix being deleted. It searched a whole file for two unrelated words that
+happened to appear three sections apart. It was mutation-tested before being trusted — against the
+one file where the mutation did land — and shipped in the same commit that added the rule about
+this. Writing the check is not the work. Watching it go red is.
 
 ## The gate is yours
 
