@@ -31,6 +31,10 @@ locally-spawned agent. The poller turns a delegation into a real session and rec
 a subagent records nothing outside the conversation that spawned it. `PIPELINE.md` has the details,
 including why `--assignee` is the wrong field and dispatches nothing.
 
+This does **not** apply to the workflow's own audit and review stages. Those are subagents too, and
+they are the point: a reviewer that did not write the diff. A run that skips them is not a cheaper
+run, it is an unreviewed one — and it must say so.
+
 ## Why this is a table and not a classifier
 
 An LLM router for this would cost a call per issue to reproduce a decision that is already a lookup
