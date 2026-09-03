@@ -24,6 +24,13 @@ cd "${1:-.}" || exit 1
     git ls-files --others --exclude-standard 2>/dev/null
   } | sort -u | while IFS= read -r f; do
     [ -n "$f" ] || continue
+    # The gate's own marker is never part of the tree it fingerprints. gate.sh computes the hash and
+    # then writes it under .test-results/gate/, so if that path counts, writing the marker invalidates
+    # it the instant it lands and require-green-gate.sh blocks EVERY commit with "the tree changed" —
+    # an edit that never happened, which is the exact failure ADR 0007 exists to remove. It happened to
+    # work here only because this repo gitignores .test-results/; a consuming repo that does not is
+    # bricked on its first commit, with a message that blames the wrong thing.
+    case "$f" in .test-results/*) continue ;; esac
     printf '%s\n' "$f"
     # A deleted file has no content to hash; its presence in the path list is the signal.
     # `|| true`: a false test would otherwise be the loop body's exit status, and with pipefail that
