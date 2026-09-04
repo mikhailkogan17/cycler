@@ -63,16 +63,34 @@ remaining move is to waive the guard. That happened.
 Commit it, or gitignore it and re-run `/cycler:setup` after each plugin upgrade — but say which, and
 tell the user, because a stale copy here is a workflow that silently differs from the plugin's.
 
-## 5. Enable the hooks
+## 5. Check `claude` can authenticate
 
-The four `PreToolUse` hooks ship with the plugin and load automatically. Confirm they are active by
-checking that this prints a path:
+```bash
+claude --print "reply with the single word: ok"
+```
+
+It must print `ok`. If it does not, stop here: every dispatched session will spawn and then die on
+its first turn, which reads from the board as a healthy run that has not commented yet. Being signed
+in to the desktop app does **not** mean the CLI is — they read different credentials, and a CLI whose
+OAuth entry cannot refresh fails exactly this way. Fix it by running `claude` in an interactive
+terminal and `/login` inside it.
+
+## 6. The hooks
+
+The four `PreToolUse` hooks ship with the plugin and load with it:
 
 ```bash
 ls "${CLAUDE_PLUGIN_ROOT}/harness/hooks/"
 ```
 
-## 6. The gate
+**This only proves the files shipped.** It does not prove a hook fires — that depends on the plugin
+being enabled in this session, which `ls` cannot see. Do not report it as "hooks active".
+
+The real proof arrives on the first run: an edit attempted before a contract exists is denied with a
+message naming the contract path. If a first run edits files with no contract and nothing stops it,
+the hooks are not loading, whatever this `ls` printed.
+
+## 7. The gate
 
 cycler does not own your gate — it always depends on the repo and the stack. Check which one
 resolves:
@@ -85,7 +103,7 @@ The first stderr line says whether it used the repo's own `.claude/harness/gate.
 default. If it used the default and the repo has real checks to run, tell the user to copy
 `${CLAUDE_PLUGIN_ROOT}/harness/gate.default.sh` to `.claude/harness/gate.sh` and add them.
 
-## 7. Verify one poll
+## 8. Verify one poll
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/poller/poller.mjs"
