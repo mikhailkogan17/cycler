@@ -56,8 +56,14 @@ done
 
 run() { LINEAR_API_KEY="$(jq -r '.access_token // empty' "$TOKEN_PATH" 2>/dev/null)" linear "$@"; }
 
+# The patterns below are the ONLY thing that starts a refresh, so they are the whole recovery path.
+# "You need to authenticate to access this operation." is what Linear actually returns on an expired
+# token, and it matched none of the original three — so for 24 hours after auth every call failed
+# with the token one HTTP request away from working, while the poller (which matches the GraphQL
+# error code instead) kept going. A recovery path that cannot trigger reports health by never
+# running. harness/tests/test-lin-refresh.mjs pins these strings.
 out=$(run "$@" 2>&1); code=$?
-if printf '%s' "$out" | grep -qiE 'not authenticated|AUTHENTICATION_ERROR|No API key configured'; then
+if printf '%s' "$out" | grep -qiE 'need to authenticate|not authenticated|AUTHENTICATION_ERROR|No API key configured'; then
   refresh && out=$(run "$@" 2>&1) && code=0 || code=1
 fi
 printf '%s\n' "$out"
