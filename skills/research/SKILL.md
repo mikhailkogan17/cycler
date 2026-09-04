@@ -32,6 +32,23 @@ produced a second contradicting comment on the same issue and a human had to rec
 - Partial answer → extend it, naming what you are adding.
 - Nothing → proceed.
 
+## 1b. Say you started, before you do anything slow
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment list <KEY> | grep -q 'harness:<KEY>:started' \
+  || "${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment add <KEY> --body '<!-- harness:<KEY>:started -->
+🔎 Research run started — grounding in the repo, then deciding. Next comment is the answer.'
+```
+
+The poller watches for this marker. It dispatches a session and has no other way to learn whether
+that session ever drew breath: four APL-60 dispatches died on `Login expired` within seconds, and
+all four read as successful from the board because spawning had worked. If this comment is missing a
+few minutes after dispatch, the poller declares the run dead and retries it. **So post it early** —
+before the web research, before the long reads.
+
+A failure here is never a reason not to continue. The marker makes it idempotent; a re-run must not
+post it twice.
+
 ## 2. Ground it in this repo before reaching for the web
 
 The value of these answers is that they are about **this** codebase, not the topic in general.
