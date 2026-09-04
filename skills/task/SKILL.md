@@ -52,11 +52,19 @@ description: Run a task end-to-end in ONE workflow (task-orchestration): contrac
 node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" repo.base main
 node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" repo.branchPrefix claude/
 node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" repo.path ""
+node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" --json
+echo "${CLAUDE_PLUGIN_ROOT}"
 ```
 
-   Pass those as `prBase`, `branchPrefix` and `cwd` below. A repo with no `cycler.yaml` gets the
-   defaults, which are the values shown in those commands — nothing breaks, nothing is silently
-   shaped like somebody else's repo.
+   Pass those as `prBase`, `branchPrefix`, `cwd`, `config` and `pluginRoot` below. A repo with no
+   `cycler.yaml` gets the defaults, which are the values shown in those commands — nothing breaks,
+   nothing is silently shaped like somebody else's repo.
+
+   **`cwd` and `pluginRoot` are not optional.** The Workflow runtime exposes `args`, `agent`,
+   `parallel`, `pipeline`, `log`, `phase` and `budget` — there is no `process`, so the workflow has
+   nothing to fall back on and throws immediately if either is missing. It used to fall back to
+   `process.cwd()`, which is a `ReferenceError` in that runtime: the script died on its first line
+   and every unattended dispatch left no branch and no PR.
 
 **The workflow's audit and review stages are subagents, and you must let them run.** A repo may carry a
 rule against spawning subagents to work an issue — that rule is about not spawning a local agent
@@ -73,7 +81,9 @@ report it as a clean review.
 ```js
 Workflow({ scriptPath: '.claude/workflows/task-orchestration.js', args: {
   task: '<the user request verbatim — or, for a Linear reference, the resolved issue title + description>',
-  cwd: '<repo root>',
+  cwd: '<repo.path from cycler.yaml — REQUIRED, the workflow throws without it>',
+  pluginRoot: '<the ${CLAUDE_PLUGIN_ROOT} you echoed above — REQUIRED, the workflow throws without it>',
+  config: <the parsed --json output above; omit only for a repo with no cycler.yaml>,
   executorModel: '<lower Claude model id like "sonnet"/"haiku", or omit to inherit>',
   noCommit: <true if the user wants to review before commit; omit for full automation>,
   stopAtContract: <true when plan mode is active; omit otherwise>,
