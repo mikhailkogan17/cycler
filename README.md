@@ -38,8 +38,8 @@ In Claude Code:
 `/cycler:setup` walks the Linear OAuth application, runs the authorisation, writes `cycler.yaml`, and
 verifies one poll. `/cycler:start-polling` installs the launchd job.
 
-Check it any time with `/cycler:doctor`, which tests the seven things that actually break rather than a
-generic checklist.
+Check it any time with `/cycler:doctor`, which tests the seven things that actually break rather than
+a generic checklist.
 
 Then, in Linear, **delegate** an issue to the Claude agent. Delegate, not assign — they are different
 fields, and assigning dispatches nothing while looking correct.
