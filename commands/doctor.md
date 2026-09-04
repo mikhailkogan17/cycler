@@ -46,6 +46,26 @@ user who changed `launchd.label` can see which job was actually checked.
 Both must be absolute paths that exist and are executable. launchd's PATH is
 `/usr/bin:/bin:/usr/sbin:/sbin` — a bare `node` or `claude` is not found.
 
+### 3b. …and `claude` can actually authenticate
+
+Executable is not the same as usable. Check it:
+
+```bash
+claude --print "reply with the single word: ok"
+```
+
+It must print `ok`. Anything else — `Failed to authenticate: OAuth session expired and could not be
+refreshed`, or a hang — means **every dispatch will spawn a session that dies on its first turn**.
+That looks identical to a healthy run from the board: the poller's liveness check now catches it and
+comments, but the fix is here.
+
+This is the single credential without which nothing in cycler runs, and it was the only one nothing
+checked. Four consecutive dispatches of one issue died on `Login expired` before anyone noticed,
+because the CLI's own OAuth entry had `expiresAt: 0` and could not refresh, while the desktop app was
+signed in perfectly happily — signing in there does **not** repair what the CLI reads.
+
+Fix: run `claude` in an interactive terminal and `/login` inside it. Not the desktop app.
+
 ## 4. Repo
 
 ```bash
