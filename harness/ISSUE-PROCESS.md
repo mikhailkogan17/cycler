@@ -51,11 +51,17 @@ missing, run `/cycler:setup`; do not substitute a plugin path, it will not run.
 
 ```js
 Workflow({ scriptPath: ".claude/workflows/task-orchestration.js", args: {
-  contractPath: "<the contract you just wrote>", cwd: process.cwd(),
+  contractPath: "<the contract you just wrote>",
+  cwd: "<the repo checkout — repo.path from cycler.yaml>",
+  pluginRoot: "<${CLAUDE_PLUGIN_ROOT}, expanded to a real path>",
   issueId: "<ISSUE>", branch: "<BRANCH>", prBase: "<BASE>",
   worktree: false, linear: false
 }})
 ```
+
+`cwd` and `pluginRoot` must be real paths you resolved in the shell first. Do not write
+`process.cwd()` or `${CLAUDE_PLUGIN_ROOT}` unexpanded into these args: the Workflow runtime has no
+`process` and does no shell expansion, and the workflow throws rather than guess a checkout.
 
 ## 2. Implement (you, no agent)
 

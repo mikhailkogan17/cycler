@@ -79,11 +79,29 @@ export const meta = {
 // one being changed. It is reassigned exactly once, by the Branch stage; the stage prompts are template
 // literals inside functions, so they pick up the final value at call time.
 // cycler: no hardcoded checkout. args.cwd is what the /task skill passes from cycler.yaml
-// (repo.path); process.cwd() is the fallback for a direct Workflow() call from inside the repo.
-const repoRoot = args?.cwd || process.cwd()
+// (repo.path). There is deliberately no fallback: the Workflow runtime exposes args/agent/parallel/
+// pipeline/log/phase/budget and NOTHING else — no `process`, so the `process.cwd()` fallback that
+// used to sit here was a ReferenceError on the first line of every unattended run, before a single
+// stage dispatched. A caller that cannot say which checkout to work on must fail here and say so,
+// not guess.
+if (!args?.cwd) {
+  throw new Error(
+    'task-orchestration: args.cwd is required (the repo checkout to work in). ' +
+      'The /cycler:task skill reads it from cycler.yaml repo.path; pass it explicitly for a direct call.'
+  )
+}
+const repoRoot = args.cwd
 // Where the plugin's own scripts and docs live. Every prompt below interpolates this rather than a
-// literal path, so the harness works wherever the plugin is installed.
-const PLUGIN_ROOT = args?.pluginRoot || process.env.CLAUDE_PLUGIN_ROOT || '.'
+// literal path, so the harness works wherever the plugin is installed. Same rule as cwd: no
+// `process.env.CLAUDE_PLUGIN_ROOT` fallback is available here, and defaulting to '.' only moved the
+// failure deeper — every gate, audit and hook path would point at a directory with no harness in it.
+if (!args?.pluginRoot) {
+  throw new Error(
+    'task-orchestration: args.pluginRoot is required (where the cycler plugin is installed). ' +
+      'The /cycler:task skill passes ${CLAUDE_PLUGIN_ROOT}; pass it explicitly for a direct call.'
+  )
+}
+const PLUGIN_ROOT = args.pluginRoot
 // The repo's cycler.yaml, parsed and passed in by the /task skill. Everything project-specific lives
 // here rather than in this file: the workflow used to name one project's Xcode schemes and npm
 // workspace layout in every prompt of every run, in every repo that installed it.
