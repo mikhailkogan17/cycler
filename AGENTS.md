@@ -131,7 +131,9 @@ The rule underneath all of it: **green is only evidence if the check could have 
 checks in this harness's history were found incapable of failing on the input they judged — a
 predicate returning literal `true`, a count/slice pairing no test could reach, a cross-language check
 matching its own doc comment, a Swift gate that skipped Swift, a contract hook satisfied by renaming
-a file, and routing that dispatched the same workflow for everything. Each looked green for weeks.
+a file, routing that dispatched the same workflow for everything, and a config-driven test whose
+config was never loaded — which hid three separate `ReferenceError`s through a fully green suite.
+Each looked green for weeks.
 
 ## 8. The gate is repo-local
 
@@ -153,7 +155,14 @@ The default reports **FAIL**, not a vacuous pass, when it finds no script to run
 - `node harness/tests/run.mjs` — the harness's own suite ships with it.
 - The resolver must be able to go red: it must pick the repo's gate in a repo that has one and the
   default in a repo that does not.
-- End to end in a repo that is not the one it grew in — that is the only test of the claim.
+
+
+**Not yet done:** an end-to-end run in a repo that is not the one this grew in — a live delegation
+through a real session to a real PR. The deterministic halves are verified in a scratch repo (gate
+resolution both ways, the default gate going green and red on real outcomes, the commit hook
+accepting a gated tree and refusing an edited one), but the full loop has only ever completed in
+applygent. It is the only test of the headline claim and it belongs here, under gaps, until it
+happens.
 
 ## 10. Non-goals
 

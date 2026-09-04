@@ -43,12 +43,18 @@ they added, with nobody lying.
 
 | # | Assertion | Test |
 |---|---|---|
-| 3.1 | A green gate writes `.test-results/gate/last-pass` | `test-green-gate-marker.mjs` |
+| 3.1 | A green gate writes `.test-results/gate/last-pass` | `test-require-green-gate-hook.mjs` |
 | 3.2 | A red gate deletes it, so no stale pass is honoured | — untested |
 | 3.3 | The hash is index-independent: `git add` does not change it | `test-green-gate-marker.mjs` |
 | 3.4 | A content change **does** change it | `test-green-gate-marker.mjs` |
 | 3.5 | A deletion changes it | `test-green-gate-marker.mjs` |
-| 3.6 | Gate and hook compute it with the **same** script | `test-green-gate-marker.mjs` |
+| 3.6 | Gate and hook compute it with the **same** script | `test-require-green-gate-hook.mjs` |
+
+3.1 and 3.6 cited `test-green-gate-marker.mjs` until an audit checked: that file tests
+`tree-fingerprint.sh` and mentions neither the marker path nor the gate. Four rows across two specs
+said the commit hook was covered while it had no test at all, and the hook could be deleted with all
+25 files still green. A citation that makes a gap look covered is the same defect as a check that
+cannot fail, one level up — so these rows now name the test that actually asserts them.
 
 3.3 and 3.4 are the pair. Asserting only 3.4 was possible before, and the old implementation would
 have passed it while making every commit impossible — see

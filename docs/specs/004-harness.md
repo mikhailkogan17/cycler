@@ -23,8 +23,8 @@
 |---|---|---|
 | 2.1 | An edit with no contract for this issue is denied | `test-require-contract-hook.mjs` |
 | 2.2 | A contract for a **different** issue does not satisfy the hook | `test-require-contract-hook.mjs` |
-| 2.3 | A commit with no green marker is denied | `test-green-gate-marker.mjs` |
-| 2.4 | A commit after an edit invalidating the marker is denied | `test-green-gate-marker.mjs` |
+| 2.3 | A commit with no green marker is denied | `test-require-green-gate-hook.mjs` |
+| 2.4 | A commit after an edit invalidating the marker is denied | `test-require-green-gate-hook.mjs` |
 | 2.5 | Editing past `escapeHatch` limits is denied, with the reason | `test-escape-hatch-hook.mjs` |
 | 2.6 | An explicit waiver in the contract re-opens the escape hatch | `test-escape-hatch-hook.mjs` |
 | 2.7 | A write outside the session's worktree is denied | `test-confine-to-worktree.mjs` |
