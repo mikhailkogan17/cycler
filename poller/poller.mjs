@@ -40,6 +40,8 @@ const DIR = process.env.CYCLER_HOME || join(homedir(), '.cycler');
 const CONFIG_PATH = join(DIR, 'config.json');
 const TOKEN_PATH = join(DIR, 'token.json');
 const STATE_PATH = join(DIR, 'processed.json');
+// Dispatch records awaiting proof of life. See checkLiveness().
+const PENDING_PATH = join(DIR, 'pending.json');
 
 const REDIRECT_URI = 'http://localhost:8787/callback';
 const SCOPES = 'read,write,app:assignable,app:mentionable';
@@ -58,6 +60,11 @@ const PATH_PREPEND = (ycfg.dispatch?.pathPrepend?.length
 // it sent the session a literal string with no skill behind it.
 const WORKFLOW = process.env.CYCLER_WORKFLOW || ycfg.routes?.default || '/cycler:task';
 const MAX_PER_POLL = 50;
+// How long a dispatched session gets to post its start marker before it is declared dead, and how
+// many times an issue is re-dispatched before the poller stops trying. Both are cycler.yaml keys
+// because "how slow is a cold start here" is a machine fact, not a universal one.
+const START_GRACE_MS = Number(ycfg.dispatch?.startGraceSeconds ?? 300) * 1000;
+const MAX_DISPATCH_ATTEMPTS = Number(ycfg.dispatch?.maxAttempts ?? 3);
 
 // Route by label, per harness/ROUTING.md. Until this existed the poller dispatched /task for
 // EVERYTHING, so that table was advice the only automated path ignored — a Research issue got a
@@ -295,6 +302,23 @@ async function dispatch(issue) {
   });
   child.unref();
   log(`dispatched ${issue.identifier} workflow=${workflow} session=${sessionId || 'unknown'}`);
+  // Record it as UNPROVEN. checkLiveness() on a later poll decides whether this session ever ran.
+  // Written before the announcement comment on purpose: a dispatch that is announced but not tracked
+  // is exactly the silent failure this whole mechanism exists to end.
+  try {
+    const pending = loadJson(PENDING_PATH, []).filter((r) => r.issueId !== issue.id);
+    pending.push({
+      issueId: issue.id,
+      identifier: issue.identifier,
+      workflow,
+      session: sessionId,
+      at: Date.now(),
+      attempts: carryAttempts.get(issue.id) || 1,
+    });
+    writeFileSync(PENDING_PATH, JSON.stringify(pending, null, 2));
+  } catch (err) {
+    logErr(`dispatched ${issue.identifier} but could not record it as pending: ${err.message}`);
+  }
   // The session is already running. A failure to ANNOUNCE it must not be reported as a failure to
   // dispatch it: the caller marks an issue processed only when dispatch() resolves, so throwing here
   // leaves a live session with the issue still unprocessed, and the next poll (180s) spawns a SECOND
@@ -312,6 +336,92 @@ async function dispatch(issue) {
   }
 }
 
+// Spawning a session is not the same as the session running.
+//
+// dispatch() resolves as soon as `claude --background` prints an id, and the caller marks the issue
+// processed on that. But a session can die on its first turn — an expired Claude Code login does
+// exactly this, in under a second — and from the board that is indistinguishable from a healthy run
+// that has not commented yet. Four consecutive APL-60 dispatches died this way and all four were
+// recorded as successful. The failure comment that exists for a failed SPAWN had no counterpart for
+// a failed START.
+//
+// The proof of life is the start marker `<!-- harness:<KEY>:... -->` that every routable skill posts
+// as its first act (skills/task step 3, skills/research step 1b). It is checked here, on a LATER
+// poll, because the check has to outlive the poll that dispatched: asking immediately would only ever
+// see a session that has not got there yet.
+async function checkLiveness() {
+  const pending = loadJson(PENDING_PATH, []);
+  if (!pending.length) return;
+  const now = Date.now();
+  const due = pending.filter((r) => now - r.at >= START_GRACE_MS);
+  if (!due.length) return;
+
+  const processed = new Set(loadJson(STATE_PATH, []));
+  const keep = pending.filter((r) => now - r.at < START_GRACE_MS);
+  let stateChanged = false;
+
+  for (const rec of due) {
+    let comments;
+    try {
+      ({ issue: { comments } } = await gql(
+        'query ($id: String!) { issue(id: $id) { comments(first: 50) { nodes { body } } } }',
+        { id: rec.issueId }
+      ));
+    } catch (err) {
+      // Could not tell either way. Keep waiting rather than declare a live run dead — a false
+      // "dead" costs a duplicate session on the same branch, which is the one thing worse than
+      // silence.
+      logErr(`liveness check failed for ${rec.identifier}: ${err.message}`);
+      keep.push(rec);
+      continue;
+    }
+
+    if (comments.nodes.some((c) => c.body.includes(`harness:${rec.identifier}:`))) {
+      log(`liveness ok: ${rec.identifier} session=${rec.session || 'unknown'} started`);
+      continue; // confirmed alive; drop the record
+    }
+
+    const attempts = (rec.attempts || 1);
+    const giveUp = attempts >= MAX_DISPATCH_ATTEMPTS;
+    logErr(
+      `dead dispatch: ${rec.identifier} session=${rec.session || 'unknown'} posted no start marker ` +
+        `within ${START_GRACE_MS / 1000}s (attempt ${attempts}/${MAX_DISPATCH_ATTEMPTS})`
+    );
+    try {
+      await comment(
+        rec.issueId,
+        `⚠️ **Dispatched session never started.** \`${rec.identifier}\` was handed to ` +
+          `\`${rec.workflow}\`${rec.session ? ` as session \`${rec.session}\`` : ''}, but it posted no ` +
+          `start marker within ${START_GRACE_MS / 1000}s — so it spawned and then died, rather than ` +
+          `never being seen.\n\n` +
+          `Most likely: the \`claude\` CLI login expired. Check with \`claude --print "ok"\`; ` +
+          `if it fails, run \`/login\` in an interactive terminal.\n\n` +
+          (giveUp
+            ? `This was attempt ${attempts} of ${MAX_DISPATCH_ATTEMPTS}. **Not retrying** — fix the cause, then remove ` +
+              `the issue id from \`~/.cycler/processed.json\`.`
+            : `Retrying on the next poll (attempt ${attempts + 1} of ${MAX_DISPATCH_ATTEMPTS}).`)
+      );
+    } catch (err) {
+      logErr(`  and could not comment: ${err.message}`);
+    }
+
+    if (!giveUp) {
+      // Un-process it so the next poll dispatches again. The attempt count rides on the pending
+      // record that dispatch() will write, via carryAttempts.
+      processed.delete(rec.issueId);
+      stateChanged = true;
+      carryAttempts.set(rec.issueId, attempts + 1);
+    }
+  }
+
+  if (stateChanged) writeFileSync(STATE_PATH, JSON.stringify([...processed], null, 2));
+  writeFileSync(PENDING_PATH, JSON.stringify(keep, null, 2));
+}
+
+// issueId -> the attempt number the NEXT dispatch of it represents. Lives for one poll: it is the
+// only thing carrying retry count across the un-process/re-dispatch boundary within a single run.
+const carryAttempts = new Map();
+
 async function poll() {
   const { viewer } = await gql('query { viewer { id } }');
   const { issues } = await gql(
@@ -322,6 +432,10 @@ async function poll() {
      }`,
     { delegateId: viewer.id }
   );
+
+  // Before dispatching anything new: settle the fate of what was dispatched last time. This can
+  // un-process an issue, which is what makes a dead dispatch retry below in the same poll.
+  await checkLiveness();
 
   const processed = new Set(loadJson(STATE_PATH, []));
   let changed = false;

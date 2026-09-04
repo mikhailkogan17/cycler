@@ -44,6 +44,18 @@ dispatch:
   # session never sees this, which is why it only shows up once dispatch is automated.
   pathPrepend: [~/.local/bin, ~/bin, /opt/homebrew/bin, /usr/local/bin]
 
+  # Spawning a session is not the same as the session running. `claude --background` returns an id
+  # immediately, and a session can still die on its first turn — an expired login does exactly that,
+  # in under a second. From the board that is indistinguishable from a healthy run that has not
+  # commented yet, so four dead dispatches once read as four successes.
+  #
+  # Every routable skill posts a start marker as its first act. If it has not appeared this many
+  # seconds after dispatch, the poller comments that the session never started and re-dispatches,
+  # up to maxAttempts. Raise startGraceSeconds if your repo has a slow cold start; a value below the
+  # time your first skill step actually takes will declare healthy runs dead and spawn duplicates.
+  startGraceSeconds: 300
+  maxAttempts: 3
+
 verify:
   # Checks your gate deliberately leaves out — usually because they are slow enough that putting them
   # in the gate would push people back to running them by hand. The verify agent runs these; the gate
