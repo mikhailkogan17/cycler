@@ -1,6 +1,6 @@
 # cycler — specification
 
-**cycler turns a Linear board into the queue for Claude Code sessions on your own machine.** Delegate
+**cycler turns a Linear board into the queue for Claude Code sessions on your own machine.** Assign
 an issue to the Claude agent in Linear; a poller on your laptop notices, starts a background Claude
 Code session in your repo, and that session writes a contract, implements, gates, opens a PR and
 reports back on the issue.
@@ -97,8 +97,10 @@ Environment overrides exist for the values launchd needs to force without editin
   `AUTHENTICATION_ERROR` the poller refreshes once and retries, **merging** the response into the
   stored token — a refresh response may omit `refresh_token`, and dropping it makes the *next*
   refresh impossible, turning a self-healing poller into one that dies a day later.
-- **Delegate, not assignee.** `issues(filter: { delegate: { id: { eq: viewer.id } } })`. Assigning is
-  a different field that looks right and dispatches nothing; `poller/lin-delegate` exists for that.
+- **Selected by `delegate`.** `issues(filter: { delegate: { id: { eq: viewer.id } } })` — that is the
+  field an agent lands in, and assigning one in Linear's UI is what puts it there. It is not a
+  distinction a user has to know about; the one place it leaks is `linear-cli`, which exposes
+  `--assignee` and no delegate flag, so `poller/lin-delegate` exists for CLI-driven starts.
 - **Routing** is a lookup on a label a human already wrote — `research` → `/research`, everything
   else → `workflows.default`. Deliberately not a classifier: a model would infer, less reliably,
   something already recorded, and a router that returns the default for everything is

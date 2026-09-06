@@ -4,11 +4,11 @@ How a Linear issue becomes a merged PR. Dispatch, the workflow's own phases, bra
 — previously spread across `DISPATCH.md`, `GATE.md` and `BRANCHING.md`, and in one case written down
 nowhere at all.
 
-## 1. Delegate → session
+## 1. Issue → session
 
 | # | Step | Who | Concretely |
 |---|---|---|---|
-| 1 | Delegate | you | `"${CLAUDE_PLUGIN_ROOT}/poller/lin-delegate" APL-14` — sets `delegateId`, **not** assignee |
+| 1 | Hand it over | you | in Linear, assign the issue to the Claude agent — or `"${CLAUDE_PLUGIN_ROOT}/poller/lin-delegate" APL-14` from a CLI |
 | 2 | Poll | the launchd job (`launchd.label`, default `dev.cycler.linear`), every 180s | queries `delegate == the Claude OAuth app` |
 | 3 | Dispatch | poller | `claude --background --permission-mode auto "<workflow> APL-14"` in `repo.path` |
 | 4 | Record | poller | comments the session id on the issue |
@@ -19,9 +19,10 @@ nowhere at all.
 | 9 | PR | workflow | opened, **never merged** |
 | 10 | Merge | a human | |
 
-**The trigger is the delegate field.** `linear-cli` exposes `--assignee` and has no delegate flag, so
-`lin issue update --assignee claude` looks right in the UI, changes the wrong field and dispatches
-nothing. That silent no-op is the easiest way to believe work is queued when it is not.
+**From a CLI, use `lin-delegate`.** The poller filters on the `delegate` field — where Linear puts an
+agent you assign an issue to — and `linear-cli` exposes `--assignee` with no delegate flag. So
+`lin issue update --assignee claude` writes the wrong field and dispatches nothing, which is the
+easiest way to believe work is queued when it is not. Assigning in Linear itself is fine.
 
 **`launchctl` addresses jobs by LABEL, not by filename**, and a mismatch fails with a 501 that reads
 like "not running". This is not hypothetical: the setup cycler grew out of had a job labelled

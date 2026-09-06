@@ -1,11 +1,11 @@
 ---
-description: Diagnose a cycler install — config, token, launchd job, paths, gate, and the delegate trap.
+description: Diagnose a cycler install — config, token, launchd job, paths, repo, workflow and gate.
 ---
 
 Run every check below and report each as OK or the specific failure. Do not stop at the first
 failure; a partial diagnosis sends people to fix the wrong thing.
 
-These are the eight things that have actually broken, not a generic checklist.
+These are the seven things that have actually broken, not a generic checklist.
 
 ## 0. The config file
 
@@ -101,18 +101,6 @@ bash "${CLAUDE_PLUGIN_ROOT}/harness/gate.sh" --fast 2>&1 >/dev/null | head -1
 
 Report the repo's own gate or cycler's default **by name**. A repo with real checks that is silently
 running the default gate is passing on less than the user thinks.
-
-## 7. The delegate trap
-
-Compare what is assigned to the agent against what is delegated to it:
-
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/poller/poller.mjs" 2>&1 | tail -1
-```
-
-`poll ok: N delegated, M processed` — if `N` is 0 while the user believes issues are queued, they
-almost certainly **assigned** rather than **delegated**. `lin issue update --assignee` is the wrong
-field and dispatches nothing while looking correct. Point them at `/cycler:issue <KEY>`.
 
 ## Report
 

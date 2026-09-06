@@ -31,21 +31,46 @@ A Claude Code plugin with three parts:
 - **workflow** — Contract → Branch → Implement → Audit → Verify → Commit → PR → Review →
   Follow-ups → Cleanup.
 
-```
-Linear issue assigned to Claude
-        │  poll (outbound, every 180s)
-        ▼
-   launchd job ──► claude --background, in your repo
-                            │
-                            ▼
-        contract → implement → audit → your gate → PR → review
-                            │
-                            ▼
-        PR opened, link commented back on the issue
-```
-
 You assign the issue and close the tab. The session comments when it starts, when it has open
 questions, and when the PR is up. **It never merges** — every change still passes a human.
+
+## How it works
+
+```mermaid
+flowchart TD
+    subgraph linear["Linear"]
+        A["Issue assigned<br/>to the Claude agent"]
+        Z["PR link + result<br/>commented back"]
+    end
+
+    subgraph mac["Your machine"]
+        B["launchd job<br/><i>polls every 180s, outbound</i>"]
+        C["claude --background<br/><i>in your repo</i>"]
+        subgraph run["The session"]
+            direction LR
+            D["contract"] --> E["implement"] --> F["audit"] --> G["your gate"] --> H["PR"] --> I["review"]
+        end
+    end
+
+    A -.->|"poll"| B
+    B --> C
+    C --> D
+    I --> Z
+    Z -.->|"a human merges"| M(["main"])
+
+    classDef board fill:#5E6AD2,stroke:#4b55a8,color:#fff
+    classDef local fill:#d97757,stroke:#b35f45,color:#fff
+    classDef phase fill:#f4f4f5,stroke:#b8b8bd,color:#27272a
+    classDef done fill:#1f883d,stroke:#186b31,color:#fff
+    class A,Z board
+    class B,C local
+    class D,E,F,G,H,I phase
+    class M done
+```
+
+Nothing listens on your machine. The poller makes one outbound request every 180 seconds and never
+calls a model — every token is spent by the session you configured, with your model, your
+permissions, your harness.
 
 ## Motivation
 
@@ -92,7 +117,7 @@ Then, in Linear, assign an issue to the Claude agent.
 | `/cycler:start` | set up whatever is missing, then start polling |
 | `/cycler:issue <KEY>` | dispatch one issue now, without waiting for the next poll |
 | `/cycler:stop` | unload the launchd job |
-| `/cycler:doctor` | diagnose the eight things that actually break |
+| `/cycler:doctor` | diagnose the seven things that actually break |
 
 > [!IMPORTANT]
 > **Anyone who can assign an issue to the agent can run code on your machine.** The issue becomes
