@@ -165,7 +165,7 @@ echo "link-workspace: $linked third-party links + $wslinked workspace packages -
 
 # A repo that needs more than node_modules in a fresh worktree — a gitignored config rendered from an
 # example, a generated artifact, a native dependency — declares it as `worktree.bootstrap` in
-# cycler.yaml. The Branch stage runs it after this script, advisory and never fatal.
+# the cycler config. The Branch stage runs it after this script, advisory and never fatal.
 #
 # It used to live here, hardcoded: one project's Secrets.xcconfig and its `npm run sidecar`. Real
 # needs, but that project's, executed in every worktree of every repo that installed the harness.

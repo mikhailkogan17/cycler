@@ -5,7 +5,8 @@
 # 24h (expires_in: 86399). A pinned copy works for a day and then fails with a 401 that reads like a
 # network fault — the exact trap that cost a week of debugging on the previous orchestrator.
 #
-# $CYCLER_HOME/token.json (default ~/.cycler) is the single source of truth; the poller refreshes it in place, so
+# $CYCLER_HOME/token.json (default ~/.cycler) is the single source of truth for the TOKEN; the poller
+# refreshes it in place, so
 # reading it here means this wrapper is correct for as long as the poller runs. On a 401 it refreshes
 # once itself, so `lin` also works when the poller has not run for a while.
 set -uo pipefail
@@ -21,16 +22,19 @@ set -uo pipefail
 PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 export PATH
 
-# Same directory the poller uses, same override. These drifted apart once — the poller moved and
-# these two CLIs did not, so they read a token that no longer existed.
+# Same STATE directory the poller uses, same override. These drifted apart once — the poller moved
+# and these two CLIs did not, so they read a token that no longer existed.
 DIR="${CYCLER_HOME:-$HOME/.cycler}"
 TOKEN_PATH="$DIR/token.json"
-CONFIG_PATH="$DIR/config.json"
+# The OAuth credentials are config, and config is one file: ~/.config/cycler/config.yaml. Read through
+# read-config.mjs rather than parsing YAML in bash, so this wrapper and the poller can never disagree
+# about which file or which key spelling wins.
+READ_CFG="$(dirname "$0")/../harness/read-config.mjs"
 
 refresh() {
   local cid cs rt resp
-  cid=$(jq -r '.clientId // empty' "$CONFIG_PATH" 2>/dev/null)
-  cs=$(jq -r '.clientSecret // empty' "$CONFIG_PATH" 2>/dev/null)
+  cid=$(node "$READ_CFG" linear.client_id '' 2>/dev/null)
+  cs=$(node "$READ_CFG" linear.client_secret '' 2>/dev/null)
   rt=$(jq -r '.refresh_token // empty' "$TOKEN_PATH" 2>/dev/null)
   [ -n "$cid" ] && [ -n "$cs" ] && [ -n "$rt" ] || return 1
   resp=$(curl -s -X POST https://api.linear.app/oauth/token \
@@ -47,7 +51,7 @@ refresh() {
 # Say which binary is missing, and say it as a missing binary. Everything below assumes these exist;
 # without the check a missing `linear` reads as an auth failure and a missing `jq` silently yields an
 # empty token, which reads as one too.
-for _b in linear jq curl; do
+for _b in linear jq curl node; do
   command -v "$_b" >/dev/null 2>&1 || {
     echo "lin: '$_b' not found on PATH ($PATH) — install it, or the caller stripped the environment" >&2
     exit 127

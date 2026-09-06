@@ -5,10 +5,10 @@ import { run } from './sim.mjs'
 import { makeResponder } from './stubs.mjs'
 import assert from 'node:assert'
 
-// Workspace linking is opt-in per repo (cycler.yaml: worktree.linkWorkspace). These cases are about
+// Workspace linking is opt-in per repo (config: worktree.link_workspace). These cases are about
 // what an npm-workspace repo is told, so they opt in; test-repo-specifics-are-config.mjs covers the
 // unconfigured half — that no such step appears at all.
-const LINKED = { worktree: { linkWorkspace: true } }
+const LINKED = { worktree: { link_workspace: true } }
 
 const REPO = '/repo'
 const base = { task: 'APL-99 do a thing', cwd: REPO, issueId: 'APL-99' }

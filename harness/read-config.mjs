@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// harness/read-config.mjs — read one key out of cycler.yaml, for the bash hooks.
+// harness/read-config.mjs — read one key out of the cycler config, for the bash hooks.
 //
 //   node harness/read-config.mjs <dotted.key> [default]
 //   node harness/read-config.mjs --json

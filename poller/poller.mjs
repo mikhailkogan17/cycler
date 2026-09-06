@@ -9,21 +9,23 @@
  * (--print must NOT be passed: it conflicts with --background and exits 1.)
  * then posts a confirmation comment (with the bg session id) and remembers it.
  *
- * Repo, dispatch command and routes come from cycler.yaml (see cycler.example.yaml).
+ * Credentials, repo, dispatch command and workflows all come from ONE file:
+ * ~/.config/cycler/config.yaml (see cycler.example.yaml).
  *
  * One-time setup:
  *   1. Linear → Settings → API → Applications → New application
  *      - Name: Claude   (this is how the agent appears in Linear)
  *      - Callback URL: http://localhost:8787/callback
  *      - Webhooks: NOT needed
- *   2. /cycler:setup writes ~/.cycler/config.json { "clientId", "clientSecret" } and cycler.yaml
+ *   2. /cycler:setup writes ~/.config/cycler/config.yaml, including linear.client_id/client_secret
  *   3. node poller/poller.mjs auth     # browser opens; approve; token saved
- *   4. /cycler:start-polling           # loads the launchd job that runs this every 180s
+ *   4. /cycler:setup also loads the launchd job that runs this every 180s
  *
- * Re-dispatch an issue: remove its id from ~/.cycler/processed.json
+ * ~/.cycler/ holds no config — only state this poller WRITES: token.json, processed.json and the
+ * launchd logs. Re-dispatch an issue by removing its id from ~/.cycler/processed.json.
  * Re-auth (if token revoked): run the `auth` subcommand again.
  * Config edits: take effect on the next launchd run (every 180s); force now with
- *   launchctl kickstart -k gui/$(id -u)/$(cycler.yaml launchd.label)
+ *   launchctl kickstart -k gui/$(id -u)/<launchd.label>
  */
 
 import { spawn, exec } from 'node:child_process';
@@ -34,29 +36,32 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { readConfig } from '../lib/yaml.mjs';
+import { readConfig, configPath, pick } from '../lib/yaml.mjs';
 
+// State, not config: everything in here is written by this process. The config lives in
+// ~/.config/cycler/config.yaml and is never written to.
 const DIR = process.env.CYCLER_HOME || join(homedir(), '.cycler');
-const CONFIG_PATH = join(DIR, 'config.json');
 const TOKEN_PATH = join(DIR, 'token.json');
 const STATE_PATH = join(DIR, 'processed.json');
 
 const REDIRECT_URI = 'http://localhost:8787/callback';
 const SCOPES = 'read,write,app:assignable,app:mentionable';
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude'; // use absolute path under launchd
-// cycler.yaml is the source of truth for everything below; the env vars stay as overrides because
-// launchd is easier to debug when you can force one value without editing a file.
+// The config file is the source of truth for everything below; the env vars stay as overrides
+// because launchd is easier to debug when you can force one value without editing a file.
 const ycfg = readConfig();
+const cfg = (dotted) => dotted.split('.').reduce((cur, k) => pick(cur, k), ycfg);
 const expand = (v) => String(v).replace(/^~(?=$|\/)/, homedir());
-const REPO_PATH = expand(process.env.REPO_PATH || ycfg.repo?.path || '~/your-repo');
-const PATH_PREPEND = (ycfg.dispatch?.pathPrepend?.length
-  ? ycfg.dispatch.pathPrepend
+const REPO_PATH = expand(process.env.REPO_PATH || cfg('repo.path') || '~/your-repo');
+const prepend = cfg('dispatch.path_prepend');
+const PATH_PREPEND = (Array.isArray(prepend) && prepend.length
+  ? prepend
   : ['~/.local/bin', '~/bin', '/opt/homebrew/bin', '/usr/local/bin']).map(expand);
 // /task runs the contract -> implement -> audit -> gate -> PR workflow. Measured against running the
 // harness inline in one long-lived session on the same issue and contract: 1.68M subagent tokens and a
 // merged PR, versus 10.77M and nothing shipped. There is no /start command in this repo — dispatching
 // it sent the session a literal string with no skill behind it.
-const WORKFLOW = process.env.CYCLER_WORKFLOW || ycfg.routes?.default || '/cycler:task';
+const WORKFLOW = process.env.CYCLER_WORKFLOW || cfg('workflows.default') || '/cycler:task';
 const MAX_PER_POLL = 50;
 
 // Route by label, per harness/ROUTING.md. Until this existed the poller dispatched /task for
@@ -64,19 +69,27 @@ const MAX_PER_POLL = 50;
 // contract-and-gate run for work that produces no diff, and a Harness issue got an implementer that
 // is forbidden `.claude/**` and therefore cannot pass its own audit.
 //
+// `workflows:` is a map from Linear LABEL to workflow, plus the reserved key `default`. It used to be
+// `routes.byLabel`, a list of {label, workflow, why} — three keys and a nesting level to say what
+// `research: /cycler:research` says on one line.
+//
 // Deliberately a lookup on a label a human already wrote, not a classifier. A model here would infer,
 // less reliably, something already recorded — and a router that picks /task for everything is
 // indistinguishable from a working one until something audits its choices.
 //
 // CYCLER_WORKFLOW still overrides everything, for a one-off or a bisect.
-const ROUTES = (Array.isArray(ycfg.routes?.byLabel) && ycfg.routes.byLabel.length
-  ? ycfg.routes.byLabel.map((r) => [String(r.label).toLowerCase(), r.workflow, r.why || 'configured route'])
-  : [['research', '/cycler:research', 'decision, not a diff — nothing to gate or audit']]);
+const wfMap = cfg('workflows');
+const configured = Object.entries(wfMap && typeof wfMap === 'object' && !Array.isArray(wfMap) ? wfMap : {})
+  .filter(([label, workflow]) => label.toLowerCase() !== 'default' && typeof workflow === 'string')
+  .map(([label, workflow]) => [label.toLowerCase(), workflow]);
+// Order is the file's own order — the parser preserves it — so the first matching label wins and a
+// user can express precedence by moving a line.
+const ROUTES = configured.length ? configured : [['research', '/cycler:research']];
 function workflowFor(issue) {
   if (process.env.CYCLER_WORKFLOW) return { workflow: WORKFLOW, why: 'CYCLER_WORKFLOW override' };
   const labels = (issue.labels?.nodes || []).map((l) => String(l.name || '').toLowerCase());
-  for (const [label, workflow, why] of ROUTES) {
-    if (labels.includes(label)) return { workflow, why: `label "${label}": ${why}` };
+  for (const [label, workflow] of ROUTES) {
+    if (labels.includes(label)) return { workflow, why: `label "${label}"` };
   }
   return { workflow: WORKFLOW, why: 'no routing label — the default implement-and-gate path' };
 }
@@ -92,6 +105,13 @@ function loadJson(path, fallback) {
   try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return fallback; }
 }
 
+// The OAuth application's credentials, from the one config file. Not a personal API key: a personal
+// key acts as YOU, and an issue cannot be delegated to a person the way it is delegated to an agent.
+// `actor=app` is what makes "Claude" a name on the board, and it is what the delegate filter matches.
+function linearApp() {
+  return { clientId: cfg('linear.client_id'), clientSecret: cfg('linear.client_secret') };
+}
+
 /**
  * Linear OAuth access tokens last 24h (`expires_in: 86399`). Without a refresh the poller silently
  * stops dispatching a day after `auth`, and the symptom is a 401 that reads like a network fault —
@@ -99,15 +119,15 @@ function loadJson(path, fallback) {
  * The refresh token is long-lived, so one retry on 401 keeps this running indefinitely.
  */
 async function refreshToken() {
-  const cfg = loadJson(CONFIG_PATH, null);
+  const { clientId, clientSecret } = linearApp();
   const tok = loadJson(TOKEN_PATH, {});
-  if (!cfg?.clientId || !cfg?.clientSecret || !tok.refresh_token) return false;
+  if (!clientId || !clientSecret || !tok.refresh_token) return false;
   const res = await fetch('https://api.linear.app/oauth/token', {
     method: 'POST',
     body: new URLSearchParams({
       grant_type: 'refresh_token',
-      client_id: cfg.clientId,
-      client_secret: cfg.clientSecret,
+      client_id: clientId,
+      client_secret: clientSecret,
       refresh_token: tok.refresh_token,
     }),
   });
@@ -144,9 +164,10 @@ async function gql(query, variables = {}, retried = false) {
 }
 
 async function auth() {
-  const cfg = loadJson(CONFIG_PATH, null);
-  if (!cfg?.clientId || !cfg?.clientSecret) {
-    throw new Error(`Missing ${CONFIG_PATH} with { "clientId", "clientSecret" }`);
+  const { clientId, clientSecret } = linearApp();
+  if (!clientId || !clientSecret) {
+    throw new Error(
+      `Missing linear.client_id / linear.client_secret in ${configPath() || '~/.config/cycler/config.yaml'}`);
   }
   // A real nonce, and one that is actually checked below. This used to be the constant string
   // 'cycler', with the callback reading only `code` — so it was neither a nonce nor verified, while
@@ -157,7 +178,7 @@ async function auth() {
   const state = randomBytes(16).toString('hex');
   const url =
     'https://linear.app/oauth/authorize' +
-    `?client_id=${cfg.clientId}` +
+    `?client_id=${clientId}` +
     `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
     '&response_type=code' +
     `&scope=${encodeURIComponent(SCOPES)}` +
@@ -176,8 +197,8 @@ async function auth() {
       }
       const body = new URLSearchParams({
         grant_type: 'authorization_code',
-        client_id: cfg.clientId,
-        client_secret: cfg.clientSecret,
+        client_id: clientId,
+        client_secret: clientSecret,
         redirect_uri: REDIRECT_URI,
         code: u.searchParams.get('code'),
       });
@@ -230,7 +251,7 @@ function splitCommand(tpl) {
 }
 
 function buildDispatchArgv(issue, workflow, sessionName) {
-  const tpl = ycfg.dispatch?.command || DEFAULT_DISPATCH;
+  const tpl = cfg('dispatch.command') || DEFAULT_DISPATCH;
   const vars = {
     workflow,
     issue: issue.identifier,
@@ -251,7 +272,7 @@ async function dispatch(issue) {
   const sessionName = `[${issue.identifier}] ${issue.title}`.slice(0, 80);
   const { workflow, why } = workflowFor(issue);
   log(`routing ${issue.identifier} -> ${workflow} (${why})`);
-  // The whole command is configurable (cycler.yaml: dispatch.command). The default is the one that
+  // The whole command is configurable (config: dispatch.command). The default is the one that
   // works: --print must NOT appear alongside --background — they conflict and claude exits 1, which
   // looks exactly like "the agent never saw the issue".
   const argv = buildDispatchArgv(issue, workflow, sessionName);

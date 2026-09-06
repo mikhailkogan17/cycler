@@ -16,6 +16,9 @@ rm -f "$PLIST"
 launchctl list | grep "$LABEL" || echo "stopped"
 ```
 
-Confirm the grep found nothing. Leave `~/.cycler/` alone — the token and the processed-issue list
-belong to the user, and deleting them means re-authorising and re-dispatching every issue that was
-already handled.
+Confirm the grep found nothing.
+
+Leave `~/.cycler/` alone — the token and the processed-issue list belong to the user, and deleting
+them means re-authorising and re-dispatching every issue that was already handled. Leave
+`~/.config/cycler/config.yaml` alone too: stopping the poller is not uninstalling cycler, and
+`/cycler:setup` is what turns it back on.

@@ -1,11 +1,31 @@
 ---
-description: Diagnose a cycler install — token, launchd job, paths, gate, and the delegate trap.
+description: Diagnose a cycler install — config, token, launchd job, paths, gate, and the delegate trap.
 ---
 
 Run every check below and report each as OK or the specific failure. Do not stop at the first
 failure; a partial diagnosis sends people to fix the wrong thing.
 
-These are the six things that have actually broken, not a generic checklist.
+These are the eight things that have actually broken, not a generic checklist.
+
+## 0. The config file
+
+```bash
+node -e "import('${CLAUDE_PLUGIN_ROOT}/lib/yaml.mjs').then(m=>console.log(m.configPath()||'NONE'))"
+```
+
+There is exactly one, `~/.config/cycler/config.yaml`, and everything else here reads from it. `NONE`
+means every value below is a default — `repo.path` is `~/your-repo`, and the poller has no
+credentials to refresh a token with. Report which file was found, by path.
+
+Also check the credentials parse out of it — an empty value here is a poller that works until the
+first token expiry and then stops:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" linear.client_id MISSING
+node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" linear.client_secret MISSING
+```
+
+Report whether each is present. **Do not print the secret** — say `present` or `MISSING`.
 
 ## 1. Token — the 24h cliff
 
@@ -53,11 +73,7 @@ REPO="$(node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" repo.path "$PWD")"
 git -C "$REPO" rev-parse --show-toplevel
 ```
 
-Must resolve to a git repo. Also confirm `cycler.yaml` is found:
-
-```bash
-node -e "import('${CLAUDE_PLUGIN_ROOT}/lib/yaml.mjs').then(m=>console.log(m.configPath()||'NONE'))"
-```
+Must resolve to a git repo.
 
 ## 5. The workflow is installed in the repo
 

@@ -46,18 +46,18 @@ description: Run a task end-to-end in ONE workflow (task-orchestration): contrac
    own failure comment exists to remove; the run itself needs the same. The marker makes it idempotent, and
    a failure here is never a reason not to start the workflow.
 
-4. **Read `cycler.yaml` first**, so the run uses this repo's settings rather than defaults:
+4. **Read the cycler config first**, so the run uses this repo's settings rather than defaults:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" repo.base main
-node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" repo.branchPrefix claude/
+node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" repo.branch_prefix claude/
 node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" repo.path ""
 node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" --json
 echo "${CLAUDE_PLUGIN_ROOT}"
 ```
 
    Pass those as `prBase`, `branchPrefix`, `cwd`, `config` and `pluginRoot` below. A repo with no
-   `cycler.yaml` gets the defaults, which are the values shown in those commands — nothing breaks,
+   config gets the defaults, which are the values shown in those commands — nothing breaks,
    nothing is silently shaped like somebody else's repo.
 
    **`cwd` and `pluginRoot` are not optional.** The Workflow runtime exposes `args`, `agent`,
@@ -81,14 +81,14 @@ report it as a clean review.
 ```js
 Workflow({ scriptPath: '.claude/workflows/task-orchestration.js', args: {
   task: '<the user request verbatim — or, for a Linear reference, the resolved issue title + description>',
-  cwd: '<repo.path from cycler.yaml — REQUIRED, the workflow throws without it>',
+  cwd: '<repo.path from the cycler config — REQUIRED, the workflow throws without it>',
   pluginRoot: '<the ${CLAUDE_PLUGIN_ROOT} you echoed above — REQUIRED, the workflow throws without it>',
-  config: <the parsed --json output above; omit only for a repo with no cycler.yaml>,
+  config: <the parsed --json output above; omit only when there is no config file>,
   executorModel: '<lower Claude model id like "sonnet"/"haiku", or omit to inherit>',
   noCommit: <true if the user wants to review before commit; omit for full automation>,
   stopAtContract: <true when plan mode is active; omit otherwise>,
-  prBase: '<repo.base from cycler.yaml, default "main"; pass the previous task\'s branch when stacking tasks>',
-  branchPrefix: '<repo.branchPrefix from cycler.yaml, default "claude/">',
+  prBase: '<repo.base from the cycler config, default "main"; pass the previous task\'s branch when stacking tasks>',
+  branchPrefix: '<repo.branch_prefix from the cycler config, default "claude/">',
   issueId: '<the tracker issue key when the task is driven from one, e.g. "APL-10" — sets the branch name>',
   branch: '<explicit branch override; omit unless you need to force a specific name>',
   models: <per-stage overrides, e.g. { verify: 'haiku' }; omit to use the defaults below>,

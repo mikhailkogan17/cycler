@@ -21,11 +21,12 @@ const t = async (n, fn) => { try { await fn(); console.log('PASS', n) } catch (e
 // Run `poller.mjs auth`, wait for the authorize URL, then drive the callback ourselves.
 async function authFlow(callbackQuery) {
   const home = mkdtempSync(join(tmpdir(), 'cycler-auth-'));
-  writeFileSync(join(home, 'config.json'), JSON.stringify({ clientId: 'cid', clientSecret: 'csec' }));
+  // The OAuth credentials come from the one config file, not a second config.json.
+  writeFileSync(join(home, 'config.yaml'), 'linear:\n  client_id: cid\n  client_secret: csec\n');
   writeFileSync(join(home, 'script.json'), JSON.stringify({}));
   writeFileSync(join(home, 'journal.ndjson'), '');
   const child = spawn(process.execPath, ['--import', DOUBLE, POLLER, 'auth'], {
-    env: { ...process.env, CYCLER_HOME: home, CYCLER_NO_BROWSER: '1',
+    env: { ...process.env, CYCLER_HOME: home, CYCLER_CONFIG: join(home, 'config.yaml'), CYCLER_NO_BROWSER: '1',
            DOUBLE_SCRIPT: join(home, 'script.json'), DOUBLE_JOURNAL: join(home, 'journal.ndjson') },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

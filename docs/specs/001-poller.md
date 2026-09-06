@@ -6,6 +6,7 @@
 
 | # | Assertion | Test |
 |---|---|---|
+| 1.0 | The client id and secret come from `linear.client_id` / `linear.client_secret` in the one config file | `test-oauth-callback.mjs`, `test-poller-live.mjs` |
 | 1.1 | OAuth uses `actor=app`, so board comments come from the agent, not the user | — untested (needs a live Linear app) |
 | 1.2 | Scopes are `read,write,app:assignable,app:mentionable` | — untested |
 | 1.3 | The callback binds `localhost:8787` only while the flow is open | — untested |
@@ -40,9 +41,9 @@ different field, looks correct in the UI and dispatches nothing.
 
 | # | Assertion | Test |
 |---|---|---|
-| 3.1 | The first `routes.byLabel` entry matching a label wins, case-insensitively | `test-poller-config.mjs` |
+| 3.1 | The first `workflows.<label>` entry matching a label wins, case-insensitively | `test-poller-config.mjs` |
 | 3.2 | A **later** configured route is reachable, not only the first | `test-poller-config.mjs` |
-| 3.3 | An issue with no matching label gets `routes.default` | `test-poller-config.mjs` |
+| 3.3 | An issue with no matching label gets `workflows.default` | `test-poller-config.mjs` |
 | 3.4 | `CYCLER_WORKFLOW` overrides all routing | `test-poller-live.mjs` |
 | 3.5 | The chosen route **and the reason** appear in the dispatch comment | `test-poller-live.mjs` |
 
@@ -53,7 +54,7 @@ different field, looks correct in the UI and dispatches nothing.
 | 4.1 | The command comes from `dispatch.command`, defaulting to the working invocation | `test-poller-config.mjs` |
 | 4.2 | `--print` never appears; it conflicts with `--background` and exits 1 | `test-poller-config.mjs` |
 | 4.3 | Placeholders are substituted **after** splitting, so no issue title can introduce an argument | `test-poller-config.mjs`, `test-poller-live.mjs` |
-| 4.4 | `PATH` is prepended with `dispatch.pathPrepend` before spawning | `test-poller-config.mjs` (loaded, not asserted) |
+| 4.4 | `PATH` is prepended with `dispatch.path_prepend` before spawning | `test-poller-config.mjs` (loaded, not asserted) |
 | 4.5 | The session id is parsed from the `backgrounded · <id>` line | `test-poller-live.mjs` |
 | 4.6 | The working directory is `repo.path` | `test-poller-live.mjs` |
 

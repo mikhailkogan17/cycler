@@ -91,12 +91,12 @@ FILES="$(section "Files expected to change")"
 [ -n "$FILES" ] || FILES="$(section "Allowed paths")"
 COUNT="$(printf '%s\n' "$FILES" | sed '/^$/d' | wc -l | tr -d ' ')"
 
-# cycler.yaml: escapeHatch.maxFiles (default 8) and escapeHatch.paths (default: none). The path list
+# config: escape_hatch.max_files (default 8) and escape_hatch.paths (default: none). The path list
 # is where a repo names the areas that are expensive to work inline — a macOS app might use apps/macOS/**,
 # because an Xcode build inside a driver session is the single most context-hungry thing it does.
 READ_CFG="$(dirname "$0")/../read-config.mjs"
-MAX_FILES="$(node "$READ_CFG" escapeHatch.maxFiles 8 2>/dev/null || echo 8)"
-HEAVY_PATHS="$(node "$READ_CFG" escapeHatch.paths '' 2>/dev/null || true)"
+MAX_FILES="$(node "$READ_CFG" escape_hatch.max_files 8 2>/dev/null || echo 8)"
+HEAVY_PATHS="$(node "$READ_CFG" escape_hatch.paths '' 2>/dev/null || true)"
 
 HEAVY=0
 HEAVY_HIT=""

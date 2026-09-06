@@ -1,4 +1,4 @@
-// The cycler.yaml parser. Deliberately a subset — but the subset has to cover what the shipped
+// The cycler config parser. Deliberately a subset — but the subset has to cover what the shipped
 // example file actually uses, and it did not.
 //
 // `dispatch.command: >` is a folded block scalar. The parser returned the literal ">", so the poller
@@ -6,7 +6,7 @@
 // every user. Nothing caught it because every test until now wrote its own inline YAML.
 //
 // Hence the last case here: parse the shipped example itself, and assert the values are usable.
-import { parseYaml, readConfig } from '../../lib/yaml.mjs';
+import { parseYaml, readConfig, get, configPath } from '../../lib/yaml.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert';
@@ -46,7 +46,42 @@ t('the shipped example parses into usable values', () => {
   assert.ok(cmd.includes('--background'), 'dispatch.command lost --background');
   assert.ok(!cmd.includes('--print'), '--print conflicts with --background and exits 1');
   assert.strictEqual(c.repo?.base, 'main');
-  assert.ok(Array.isArray(c.dispatch?.pathPrepend) && c.dispatch.pathPrepend.length >= 2);
+  assert.ok(Array.isArray(c.dispatch?.path_prepend) && c.dispatch.path_prepend.length >= 2);
+  // The credentials are in this file now, not a second config.json. If they stop parsing, the
+  // poller cannot refresh a token and dies silently 24h after setup.
+  assert.ok(c.linear?.client_id && c.linear?.client_secret, 'the example lost its linear credentials');
+  assert.strictEqual(c.workflows?.default, '/cycler:task');
+  assert.strictEqual(c.workflows?.research, '/cycler:research');
+});
+
+// $CYCLER_CONFIG names a file. If it does not exist, the answer is defaults — NOT a silent fall
+// back to some other file, which is how you debug the wrong config for an hour.
+t('$CYCLER_CONFIG wins even when the file it names does not exist', () => {
+  process.env.CYCLER_CONFIG = '/nonexistent/cycler/config.yaml';
+  assert.strictEqual(configPath(), '/nonexistent/cycler/config.yaml', 'the explicit path was not honoured');
+  assert.deepStrictEqual(readConfig(), {}, 'a missing config must degrade to defaults, not throw');
+  delete process.env.CYCLER_CONFIG;
+});
+
+// The keys renamed to snake_case in the same release that merged the two config files. A user who
+// copies a snippet written in the old spelling must not get silence: `dispatch.pathPrepend` read as
+// absent means a dispatched session with launchd's bare PATH, which stalls asking a human where node
+// is. Asserted in BOTH directions — a lookup that returned the first value for everything would pass
+// the tolerant half alone.
+t('a key resolves whichever of snake_case, camelCase or kebab-case it is written in', () => {
+  const c = parseYaml('repo:\n  branchPrefix: a/\ndispatch:\n  path-prepend: [x, y]\n');
+  assert.strictEqual(get(c, 'repo.branch_prefix'), 'a/');
+  assert.strictEqual(get(c, 'repo.branchPrefix'), 'a/');
+  assert.strictEqual(get(c, 'repo.branch-prefix'), 'a/');
+  assert.deepStrictEqual(get(c, 'dispatch.path_prepend'), ['x', 'y']);
+  assert.strictEqual(get(c, 'repo.base'), undefined, 'an absent key must stay absent, not fold onto a sibling');
+  assert.strictEqual(get(c, 'repo.branchsuffix'), undefined, 'a different key matched — the fold is too loose');
+});
+
+// The exact-match branch has to win, or a file carrying both spellings resolves unpredictably.
+t('an exact key match wins over a folded one', () => {
+  const c = parseYaml('repo:\n  branchPrefix: wrong/\n  branch_prefix: right/\n');
+  assert.strictEqual(get(c, 'repo.branch_prefix'), 'right/');
 });
 
 process.exit(fails ? 1 : 0);

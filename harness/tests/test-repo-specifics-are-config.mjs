@@ -68,9 +68,9 @@ await t('worktree linking is off unless configured', async () => {
 await t('worktree linking happens when configured', async () => {
   const { responder, prompts } = recorder({
     ...green, }) 
-  await run({ args: { ...base, worktree: true, config: { worktree: { linkWorkspace: true } } }, responder })
+  await run({ args: { ...base, worktree: true, config: { worktree: { link_workspace: true } } }, responder })
   const p = prompts['branch:claude/ABC-99'] || ''
-  assert.ok(/link-workspace\.sh/.test(p), 'linkWorkspace: true did not order the link step')
+  assert.ok(/link-workspace\.sh/.test(p), 'link_workspace: true did not order the link step')
   // The prohibition must survive with it — it is the reason the script exists.
   assert.ok(/has no exported member/.test(p), 'the observable signature that makes the ban stick was lost')
 })

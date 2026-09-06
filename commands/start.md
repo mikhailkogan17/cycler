@@ -19,7 +19,7 @@ node "${CLAUDE_PLUGIN_ROOT}/poller/poller.mjs"
 ```
 
 If the issue was already dispatched once, the poller skips it — its id is in
-`~/.cycler/processed.json`. To deliberately re-run it, remove that one id from the array first and
+`~/.cycler/processed.json` — state, not config. To deliberately re-run it, remove that one id from the array first and
 say that you did.
 
 Report the `routing …` and `dispatched …` lines, including the session id, so the user can

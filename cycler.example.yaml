@@ -1,25 +1,36 @@
-# cycler.yaml — copy to your repo root and edit. Every key is optional; the comment shows the default.
+# cycler — the whole configuration, in one file.
 #
-# /cycler:setup writes this for you. It is checked in on purpose: the branch prefix, the PR base and
-# the escape hatch are facts about the repo, and they belong next to the code they govern.
+#   ~/.config/cycler/config.yaml     (or $XDG_CONFIG_HOME/cycler/config.yaml, or $CYCLER_CONFIG)
 #
-# Secrets are NOT here. The Linear client id/secret and the OAuth token live in ~/.cycler/, which is
-# outside the repo precisely so a config file can be committed without thinking about it.
+# /cycler:setup writes this for you. There is no second file: the Linear credentials, the repo and
+# the workflows all live here. ~/.cycler/ holds only state the poller writes — the refreshing OAuth
+# token, the processed-issue list, the launchd logs — and nothing you ever edit.
+#
+# This file is NOT in your repo, so the credentials below are not one `git add .` away from a public
+# history. Every key is optional and has a working default; the four sections here are the ones worth
+# setting. The full reference — every key, its default, and when to reach for it — is in
+# docs/specs/002-config.md.
+
+linear:
+  # From Linear → Settings → API → Applications → your "Claude" application.
+  # An OAuth application, not a personal API key: a personal key acts as YOU, and an issue is
+  # delegated to an AGENT. The app is what puts the name "Claude" on the board.
+  client_id: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  client_secret: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 repo:
-  path: ~/your-repo        # where sessions are started. Default: the repo cycler.yaml sits in
+  path: ~/your-repo        # where sessions are started
   base: main               # PR base branch
-  branchPrefix: claude/    # branches are <branchPrefix><ISSUE-KEY>
+  branch_prefix: claude/   # branches are <branch_prefix><ISSUE-KEY>
 
-routes:
-  default: /cycler:task           # the implement-and-gate workflow
-  byLabel:
-    # A lookup on a label a human already wrote — deliberately NOT a classifier. A model here would
-    # infer, less reliably, something already recorded, and a router that returns the default for
-    # everything is indistinguishable from a working one until something audits it.
-    - label: research
-      workflow: /cycler:research
-      why: a decision, not a diff — nothing to gate or audit
+workflows:
+  # `default` is the workflow for an issue with no matching label. Every other key IS a Linear label,
+  # matched case-insensitively, first match wins. A lookup on a label a human already wrote —
+  # deliberately not a classifier: a model here would infer, less reliably, something already
+  # recorded, and a router that returns the default for everything is indistinguishable from a
+  # working one until something audits it.
+  default: /cycler:task        # contract → implement → audit → gate → PR
+  research: /cycler:research   # a decision, not a diff — nothing to gate or audit
 
 dispatch:
   # The whole command, as a template: {workflow} {issue} {title} {url} {session}.
@@ -42,52 +53,11 @@ dispatch:
   # launchd hands a job PATH=/usr/bin:/bin:/usr/sbin:/sbin. The dispatched session inherits it, so
   # without this it cannot find node, gh, claude or lin and stalls asking a human. An interactive
   # session never sees this, which is why it only shows up once dispatch is automated.
-  pathPrepend: [~/.local/bin, ~/bin, /opt/homebrew/bin, /usr/local/bin]
+  path_prepend: [~/.local/bin, ~/bin, /opt/homebrew/bin, /usr/local/bin]
 
-verify:
-  # Checks your gate deliberately leaves out — usually because they are slow enough that putting them
-  # in the gate would push people back to running them by hand. The verify agent runs these; the gate
-  # stays fast. Omit the section entirely and the verify agent is told about no extra steps at all.
-  #
-  # `when` is the path prefix that makes the step apply, `run` is the command, `notes` is the prose an
-  # agent needs in order not to get it wrong. Notes matter as much as the command: the case this
-  # replaced needed "there is no such scheme, it is a test target" to avoid a run-killing typo.
-  # steps:
-  #   - when: apps/macOS/**
-  #     run: cd apps/macOS && xcodegen generate && xcodebuild -scheme App -destination 'platform=macOS' test
-  #     notes: |
-  #       Run ONE suite relevant to the diff (-only-testing:AppTests/<Suite>).
-  #       Serialize it if your DI container is a global registry — parallel suites clobber each other.
-  #       `Test run with 0 tests` is a FAILURE: xcodebuild prints TEST SUCCEEDED when a filter matches
-  #       nothing, so a typo reads as a green suite.
-
-worktree:
-  # Only an npm-workspace repo needs this, and only that repo knows it is one. With it, a worktree
-  # gets a real node_modules whose workspace packages point at the WORKTREE. Without it, a worktree
-  # gets no node_modules step at all — which is what a Go, Python or Rust repo wants.
-  #
-  # Sharing the main checkout's node_modules instead makes the worktree compile its own src/ against
-  # the MAIN checkout's copy of every workspace package. Three issues each lost a fix round to it.
-  # linkWorkspace: true
-
-  # One command a fresh worktree needs before anything can build: a gitignored config rendered from
-  # its example, a generated artifact, a native dependency. Advisory — a failure is reported and the
-  # run continues, because a diff that never touches that toolchain must not be blocked by it.
-  # bootstrap: make dev-setup
-
-escapeHatch:
-  # Past these, the session must run the full workflow instead of editing inline. One driver session
-  # carrying a large change grows its context monotonically and re-reads every earlier tool result.
-  maxFiles: 8
-  paths: []                # e.g. [apps/macOS/**] — areas that are expensive to work inline
-
-launchd:
-  # The label of the polling job, and the name of its plist. launchctl addresses jobs by LABEL, so
-  # the two must match — every cycler command derives the filename from this one value so they cannot
-  # drift. Use your own reverse-DNS if you prefer, e.g. dev.yourname.cycler.
-  label: dev.cycler.linear
-
-# Note: the harness reads and writes Linear through the bundled `poller/lin`, not through an MCP
-# server. That is deliberate — an MCP server does not reliably connect in a dispatched session, and a
-# run that ends with "please file this manually" leaves the finding unfiled. There is no config key
-# for this; a key that does nothing is worse than no key.
+# Also available, and left out here because almost nobody overrides them:
+#   verify.steps          slow checks the gate leaves out, run by the verify agent
+#   worktree.link_workspace / worktree.bootstrap   what a fresh worktree needs before it can build
+#   escape_hatch.max_files / escape_hatch.paths    past these, run the full workflow, not inline
+#   launchd.label         the polling job's label and plist filename
+# All four are documented in full, with defaults, in docs/specs/002-config.md.

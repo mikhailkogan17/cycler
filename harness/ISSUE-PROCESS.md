@@ -52,7 +52,7 @@ missing, run `/cycler:setup`; do not substitute a plugin path, it will not run.
 ```js
 Workflow({ scriptPath: ".claude/workflows/task-orchestration.js", args: {
   contractPath: "<the contract you just wrote>",
-  cwd: "<the repo checkout — repo.path from cycler.yaml>",
+  cwd: "<the repo checkout — repo.path from the cycler config>",
   pluginRoot: "<${CLAUDE_PLUGIN_ROOT}, expanded to a real path>",
   issueId: "<ISSUE>", branch: "<BRANCH>", prBase: "<BASE>",
   worktree: false, linear: false
