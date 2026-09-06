@@ -56,8 +56,10 @@ dispatch:
   path_prepend: [~/.local/bin, ~/bin, /opt/homebrew/bin, /usr/local/bin]
 
 # Also available, and left out here because almost nobody overrides them:
+#   dispatch.start_grace_seconds / dispatch.max_attempts   how long a session gets to post its start
+#                         marker before it is declared dead, and how many times it is re-dispatched
 #   verify.steps          slow checks the gate leaves out, run by the verify agent
 #   worktree.link_workspace / worktree.bootstrap   what a fresh worktree needs before it can build
 #   escape_hatch.max_files / escape_hatch.paths    past these, run the full workflow, not inline
 #   launchd.label         the polling job's label and plist filename
-# All four are documented in full, with defaults, in docs/specs/002-config.md.
+# All of them are documented in full, with defaults, in docs/specs/002-config.md.

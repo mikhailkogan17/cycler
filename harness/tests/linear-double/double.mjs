@@ -34,10 +34,12 @@ globalThis.fetch = async (url, init = {}) => {
     const isViewer = /viewer\s*\{\s*id/.test(payload.query);
     const isIssues = /issues\s*\(/.test(payload.query);
     const isComment = /commentCreate/.test(payload.query);
+    // The liveness check: has the dispatched session posted its start marker yet?
+    const isIssueComments = /issue\s*\(\s*\$?id/.test(payload.query) && /comments/.test(payload.query);
 
     record({
       kind: 'graphql',
-      op: isViewer ? 'viewer' : isIssues ? 'issues' : isComment ? 'comment' : 'other',
+      op: isViewer ? 'viewer' : isIssueComments ? 'issueComments' : isIssues ? 'issues' : isComment ? 'comment' : 'other',
       auth,
       query: payload.query,
       variables: payload.variables,
@@ -49,6 +51,11 @@ globalThis.fetch = async (url, init = {}) => {
       return { ok: true, json: async () => ({ errors: [{ extensions: { type: 'AUTHENTICATION_ERROR' } }] }) };
     }
     if (isViewer) return { ok: true, json: async () => ({ data: { viewer: { id: SCRIPT.viewerId || 'viewer-1' } } }) };
+    if (isIssueComments) {
+      if (SCRIPT.commentsQueryFails) return { ok: true, json: async () => ({ errors: [{ message: 'comments unavailable' }] }) };
+      const bodies = (SCRIPT.issueComments || {})[payload.variables?.id] || [];
+      return { ok: true, json: async () => ({ data: { issue: { comments: { nodes: bodies.map((body) => ({ body })) } } } }) };
+    }
     if (isIssues) return { ok: true, json: async () => ({ data: { issues: { nodes: SCRIPT.issues || [] } } }) };
     if (isComment) {
       if (SCRIPT.commentFails) return { ok: true, json: async () => ({ errors: [{ message: 'comment refused' }] }) };

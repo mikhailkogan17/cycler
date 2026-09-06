@@ -117,12 +117,21 @@ information and cannot go stale against the route beside it.
 |---|---|---|
 | `dispatch.command` | the working `claude --background` invocation | template: `{workflow} {issue} {title} {url} {session}` |
 | `dispatch.path_prepend` | `~/.local/bin ~/bin /opt/homebrew/bin /usr/local/bin` | prepended to the child's `PATH` |
+| `dispatch.start_grace_seconds` | `300` | how long a session has to post its start marker before it is declared dead |
+| `dispatch.max_attempts` | `3` | how many times one issue is re-dispatched before the poller gives up and says so |
 
 The template is split like a shell would but **without** a shell, and placeholders are substituted
 *after* the split — so an issue title can never introduce an argument. `--print` must never appear:
 it conflicts with `--background`, `claude` exits 1, and it looks exactly like the agent never saw the
 issue. `CLAUDE_BIN` overrides `argv[0]`, because launchd needs an absolute path and that is a machine
 fact rather than a project one.
+
+Spawning a session is not the same as the session running: `claude --background` returns an id
+immediately and a session can still die on its first turn — an expired login does exactly that, in
+under a second, and from the board that is indistinguishable from a healthy run that has not
+commented yet. `start_grace_seconds` is the window; below the time your first skill step actually
+takes, healthy runs are declared dead and duplicated. `max_attempts` bounds the retry so a
+permanently broken dispatch cannot loop.
 
 `path_prepend` exists because launchd hands a job `PATH=/usr/bin:/bin:/usr/sbin:/sbin` and the
 spawned session inherits it. An interactive session never sees this, which is why it only shows up
@@ -190,6 +199,9 @@ filename from this one value so they cannot drift.
 | 3.11 | A configured `workflows.<label>` route is dispatched, and a later one is reachable | `test-poller-config.mjs` |
 | 3.12 | An unlabelled issue gets `workflows.default` | `test-poller-config.mjs` |
 | 3.13 | `launchd.label` names both the job and its plist | — untested (commands are prose) |
+| 3.14 | `dispatch.max_attempts` bounds the retries, and the default still retries | `test-dispatch-liveness.mjs` |
+| 3.15 | `dispatch.start_grace_seconds` widens the window; the same record then goes unjudged | `test-dispatch-liveness.mjs` |
+| 3.16 | The command set is exactly `start` / `stop` / `issue` / `doctor`, both directions | `test-command-names.mjs` |
 
 Every conditional key is asserted in **both** directions. A test that only checks the configured case
 passes against a hardcoded implementation; one that only checks the unconfigured case passes against
