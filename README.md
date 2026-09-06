@@ -38,34 +38,29 @@ questions, and when the PR is up. **It never merges** — every change still pas
 
 ```mermaid
 flowchart TD
-    subgraph linear["Linear"]
-        A["Issue assigned<br/>to the Claude agent"]
-        Z["PR link + result<br/>commented back"]
+    A["<b>Issue assigned</b><br/>to the Claude agent in Linear"]
+    B["<b>launchd job</b> on your Mac<br/><i>one outbound poll, every 180s</i>"]
+    C["<b>claude --background</b><br/><i>in your repo, your harness</i>"]
+
+    subgraph S ["the session"]
+        direction LR
+        D["contract"] --> E["implement"] --> F["audit"] --> G["your gate"] --> H["PR"]
     end
 
-    subgraph mac["Your machine"]
-        B["launchd job<br/><i>polls every 180s, outbound</i>"]
-        C["claude --background<br/><i>in your repo</i>"]
-        subgraph run["The session"]
-            direction LR
-            D["contract"] --> E["implement"] --> F["audit"] --> G["your gate"] --> H["PR"] --> I["review"]
-        end
-    end
+    Z["<b>PR link + result</b><br/>commented back on the issue"]
+    M(["a human merges — cycler never does"])
 
-    A -.->|"poll"| B
-    B --> C
-    C --> D
-    I --> Z
-    Z -.->|"a human merges"| M(["main"])
+    A -.->|"poll"| B --> C --> S --> Z --> M
 
     classDef board fill:#5E6AD2,stroke:#4b55a8,color:#fff
     classDef local fill:#d97757,stroke:#b35f45,color:#fff
-    classDef phase fill:#f4f4f5,stroke:#b8b8bd,color:#27272a
-    classDef done fill:#1f883d,stroke:#186b31,color:#fff
+    classDef phase fill:#eceef1,stroke:#9aa0a6,color:#1f2328
+    classDef merge fill:#1f883d,stroke:#186b31,color:#fff
     class A,Z board
     class B,C local
-    class D,E,F,G,H,I phase
-    class M done
+    class D,E,F,G,H phase
+    class M merge
+    style S fill:none,stroke:#9aa0a6,stroke-dasharray:4 4,color:#6e7781
 ```
 
 Nothing listens on your machine. The poller makes one outbound request every 180 seconds and never
