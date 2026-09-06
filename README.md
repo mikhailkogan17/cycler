@@ -7,7 +7,7 @@
   </picture>
 </p>
 
-<h1 align="center">Delegate a Linear issue to Claude. Get a gated pull request back.</h1>
+<h1 align="center">Assign a Linear issue to Claude. Get a gated pull request back.</h1>
 
 <p align="center">
   On your machine · your harness · your gate · no cloud, no webhook, no tunnel
@@ -26,13 +26,13 @@
 
 A Claude Code plugin with three parts:
 
-- **poller** — checks Linear for issues delegated to the agent, every 180 seconds;
+- **poller** — checks Linear for issues assigned to the agent, every 180 seconds;
 - **dispatch** — starts a background Claude Code session in your repo, remote control on;
 - **workflow** — Contract → Branch → Implement → Audit → Verify → Commit → PR → Review →
   Follow-ups → Cleanup.
 
 ```
-Linear issue delegated to Claude
+Linear issue assigned to Claude
         │  poll (outbound, every 180s)
         ▼
    launchd job ──► claude --background, in your repo
@@ -44,7 +44,7 @@ Linear issue delegated to Claude
         PR opened, link commented back on the issue
 ```
 
-You delegate the issue and close the tab. The session comments when it starts, when it has open
+You assign the issue and close the tab. The session comments when it starts, when it has open
 questions, and when the PR is up. **It never merges** — every change still passes a human.
 
 ## Motivation
@@ -83,10 +83,7 @@ In Claude Code — these are slash commands, not shell:
 workflow file, a gate check, one verified poll, and the launchd job. Run it again any time — it
 checks what is already done and fills only the gaps.
 
-Then, in Linear, **delegate** an issue to the Claude agent.
-
-> [!WARNING]
-> **Delegate, not assign.** They are different fields. Assigning looks right and dispatches nothing.
+Then, in Linear, assign an issue to the Claude agent.
 
 ## Usage
 
@@ -98,12 +95,12 @@ Then, in Linear, **delegate** an issue to the Claude agent.
 | `/cycler:doctor` | diagnose the eight things that actually break |
 
 > [!IMPORTANT]
-> **Anyone who can delegate an issue to the agent can run code on your machine.** The issue becomes
+> **Anyone who can assign an issue to the agent can run code on your machine.** The issue becomes
 > the prompt of a Claude Code session in your repo, by default with `--permission-mode auto`. Treat
-> delegate rights as repository write access plus a shell. On a solo workspace this is a non-issue;
-> on a shared one, restrict who can delegate. The mitigations — a shell-free dispatch, contract path
+> that as repository write access plus a shell. On a solo workspace this is a non-issue; on a shared
+> one, restrict who can assign to the agent. The mitigations — a shell-free dispatch, contract path
 > limits, worktree confinement, and never merging — are real but are not a substitute for trusting
-> the people who can delegate.
+> the people who can assign to it.
 
 ---
 
@@ -183,7 +180,6 @@ behavioural spec each part is written against.
 
 | symptom | cause |
 |---|---|
-| Nothing dispatches, the issue looks right | assigned instead of **delegated** — a different field |
 | Worked yesterday, 401 today | Linear tokens expire in 24h; the refresh needs `client_id` and `client_secret` |
 | Job loaded, nothing happens | `launchctl` addresses jobs by **label**; the plist filename has to match it |
 | Session stalls asking where `node` is | launchd's bare `PATH` — set `dispatch.path_prepend` |
