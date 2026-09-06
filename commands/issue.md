@@ -5,8 +5,8 @@ argument-hint: <ISSUE-KEY>
 
 Dispatch `$1` immediately.
 
-The issue must be **delegated** to the Claude agent in Linear — that is the field the poller filters
-on. Assigning is a different field: it looks right and dispatches nothing. If it is not delegated:
+The issue has to be assigned to the Claude agent in Linear. If it is not — or if it was set from
+`linear-cli`, whose `--assignee` writes a different field than the one the poller reads:
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/poller/lin-delegate" $1

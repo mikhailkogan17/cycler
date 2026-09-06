@@ -44,19 +44,19 @@ For anything else — a question, a one-line fix, exploration — just do the wo
 - **Never commit** secrets, local config, or anything under `.claude/harness/contracts/`.
 - **Never edit a submodule.** Change the commit reference, or open an upstream PR.
 - **Never merge your own PR.** Opening it is where an agent's authority ends.
-- **Never spawn a subagent to work a Linear issue. Delegate it instead** — set the issue's *delegate*
-  to the Claude agent, and cycler dispatches a real session that leaves a trail on the board. A
-  locally-spawned agent leaves none: its worktree, findings and reasoning die with the conversation
-  that started it. Note the trigger is the **delegate** field; `--assignee` is a different field and
-  dispatches nothing while looking right.
+- **Never spawn a subagent to work a Linear issue. Hand it to the board instead** — assign the issue
+  to the Claude agent and cycler dispatches a real session that leaves a trail. A locally-spawned
+  agent leaves none: its worktree, findings and reasoning die with the conversation that started it.
+  From a CLI use `poller/lin-delegate`, because `linear-cli`'s `--assignee` writes a different field
+  than the poller reads.
 
   **This does not forbid the workflow's own stages.** `task-orchestration` dispatches an independent
   auditor and four review lenses, and those are subagents by design — an adversary that did not write
   the diff is the single most valuable thing the harness does. The rule above is about not spawning a
-  local agent *instead of delegating a separate issue*, because that agent's worktree, findings and
+  local agent *instead of handing a separate issue to the board*, because that agent's worktree, findings and
   reasoning die with the conversation and the board never learns the work happened. Running your own
   run's audit and review is the opposite: it is the run doing its job.
-  <!-- [your repo]: add a one-liner here for however you set the delegate. -->
+  <!-- [your repo]: add a one-liner here for however you hand an issue to the agent. -->
 
 ## Repo-specific hazards
 

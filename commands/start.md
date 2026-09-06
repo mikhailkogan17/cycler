@@ -196,8 +196,8 @@ because the job loaded. A loaded job that fails every poll looks identical to a 
 
 ## Done
 
-Tell the user how to use it: **delegate** an issue to Claude in Linear — delegate, not assign;
-assigning looks right and dispatches nothing — and the poller picks it up within 180 seconds.
+Tell the user how to use it: assign an issue to Claude in Linear, and the poller picks it up
+within 180 seconds.
 
 `/cycler:issue <KEY>` dispatches one now. `/cycler:stop` unloads the job.
 `/cycler:doctor` diagnoses it.

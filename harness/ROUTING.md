@@ -26,10 +26,11 @@ depends on things no label records, like whether an issue is too thin to contrac
 
 Whatever the route: **`gate.sh` gates the commit.** That is not a routing decision, it is a hook.
 
-And whatever the route, **the way to start work on an issue is `"${CLAUDE_PLUGIN_ROOT}/poller/lin-delegate" APL-N`**, not a
-locally-spawned agent. The poller turns a delegation into a real session and records it on the issue;
-a subagent records nothing outside the conversation that spawned it. `PIPELINE.md` has the details,
-including why `--assignee` is the wrong field and dispatches nothing.
+And whatever the route, **the way to start work on an issue is to hand it to the board** — assign it
+to the Claude agent, or `"${CLAUDE_PLUGIN_ROOT}/poller/lin-delegate" APL-N` from a CLI — not a
+locally-spawned agent. The poller turns that into a real session and records it on the issue; a
+subagent records nothing outside the conversation that spawned it. `PIPELINE.md` has the details,
+including why `linear-cli`'s `--assignee` writes the wrong field.
 
 This does **not** apply to the workflow's own audit and review stages. Those are subagents too, and
 they are the point: a reviewer that did not write the diff. A run that skips them is not a cheaper

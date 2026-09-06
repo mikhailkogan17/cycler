@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Delegate a Linear issue to the "Claude" agent — the trigger the poller watches for.
 #
-# `linear-cli` has --assignee but no --delegate, and the poller filters on DELEGATE
-# (`delegate: { id: { eq: viewer.id } }` in poller.mjs), not assignee. Assigning an
-# issue therefore looks right in the UI and dispatches nothing. This sets the field that actually
-# fires, using the same self-refreshing token as the bundled `lin`.
+# For CLI use. In Linear itself you just assign the issue to the agent; this is the equivalent from a
+# shell, because `linear-cli` has --assignee but no --delegate, and the poller filters on DELEGATE
+# (`delegate: { id: { eq: viewer.id } }` in poller.mjs). `lin issue update --assignee` writes the
+# wrong field and dispatches nothing. Uses the same self-refreshing token as the bundled `lin`.
 #
 # Usage: lin-delegate APL-14 [APL-24 ...]
 set -uo pipefail
