@@ -83,21 +83,22 @@ In Claude Code:
 ```
 /plugin marketplace add mikhailkogan17/cycler
 /plugin install cycler@cycler
-/cycler:setup
+/cycler:start
 ```
 
-`/cycler:setup` is the whole thing: it walks you through the Linear OAuth application, runs the
+`/cycler:start` is the whole thing: it walks you through the Linear OAuth application, runs the
 authorisation, writes the config, installs the workflow into your repo, checks your gate, verifies
-one poll and loads the launchd job.
+one poll and loads the launchd job. Run it again any time — it checks what is already done and only
+fills the gaps, so it is also how you switch the loop back on after `/cycler:stop`.
 
 Then, in Linear, **delegate** an issue to the Claude agent. Delegate, not assign — they are
 different fields, and assigning dispatches nothing while looking correct.
 
 | command | does |
 |---|---|
-| `/cycler:setup` | one-time setup, polling included |
-| `/cycler:start <KEY>` | dispatch one issue now, without waiting for the next poll |
-| `/cycler:stop-polling` | unload the launchd job |
+| `/cycler:start` | set up whatever is missing, then start polling |
+| `/cycler:issue <KEY>` | dispatch one issue now, without waiting for the next poll |
+| `/cycler:stop` | unload the launchd job |
 | `/cycler:doctor` | diagnose the eight things that actually break |
 
 > [!IMPORTANT]

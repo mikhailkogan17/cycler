@@ -26,7 +26,7 @@ Nothing listens on the machine. There is no cycler account, no cycler server, an
 ## Consequences
 
 **Worse:** up to 180 seconds of latency between delegating an issue and the session starting. For
-work that takes 10–40 minutes, this is noise; `/cycler:start <KEY>` forces a poll when it is not.
+work that takes 10–40 minutes, this is noise; `/cycler:issue <KEY>` forces a poll when it is not.
 
 **Worse:** the machine must be awake. launchd runs a missed job once on wake, so a closed laptop
 delays dispatch rather than losing it, but a machine that is off dispatches nothing.

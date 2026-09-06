@@ -17,9 +17,9 @@
  *      - Name: Claude   (this is how the agent appears in Linear)
  *      - Callback URL: http://localhost:8787/callback
  *      - Webhooks: NOT needed
- *   2. /cycler:setup writes ~/.config/cycler/config.yaml, including linear.client_id/client_secret
+ *   2. /cycler:start writes ~/.config/cycler/config.yaml, including linear.client_id/client_secret
  *   3. node poller/poller.mjs auth     # browser opens; approve; token saved
- *   4. /cycler:setup also loads the launchd job that runs this every 180s
+ *   4. /cycler:start also loads the launchd job that runs this every 180s
  *
  * ~/.cycler/ holds no config — only state this poller WRITES: token.json, processed.json and the
  * launchd logs. Re-dispatch an issue by removing its id from ~/.cycler/processed.json.
@@ -144,7 +144,7 @@ async function refreshToken() {
 
 async function gqlOnce(query, variables) {
   const { access_token } = loadJson(TOKEN_PATH, {});
-  if (!access_token) throw new Error('No token. Run: /cycler:setup (or: node poller/poller.mjs auth)');
+  if (!access_token) throw new Error('No token. Run: /cycler:start (or: node poller/poller.mjs auth)');
   const res = await fetch('https://api.linear.app/graphql', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${access_token}` },

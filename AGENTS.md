@@ -40,7 +40,7 @@ cycler/
   README.md  AGENTS.md  LICENSE  cycler.example.yaml
   .claude-plugin/plugin.json      the plugin manifest
   commands/                       the only user interface — no CLI
-    setup.md  stop-polling.md  start.md  doctor.md
+    start.md  stop.md  issue.md  doctor.md
   hooks/hooks.json                the four PreToolUse hooks, plugin-rooted
   lib/yaml.mjs                    the config reader, shared by poller and hooks
   poller/poller.mjs               the poller
@@ -59,9 +59,12 @@ cycler/
 
 ## 4. Interface
 
-Slash commands only — no CLI, no npm binary, no second install surface. `/cycler:setup`,
-`/cycler:stop-polling`, `/cycler:start <KEY>`, `/cycler:doctor`. They are
-command files that instruct the session to run the underlying bash.
+Slash commands only — no CLI, no npm binary, no second install surface. `/cycler:start`,
+`/cycler:stop`, `/cycler:issue <KEY>`, `/cycler:doctor`. They are command files that instruct the
+session to run the underlying bash. `/cycler:start` is idempotent by design: it checks what is
+already configured and does only the missing parts, so "set it up" and "switch the loop back on"
+are the same command. Two commands for those would mean a user who ran the wrong one gets a
+poller that is configured and not running.
 
 ## 5. Config
 

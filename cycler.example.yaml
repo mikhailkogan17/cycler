@@ -2,7 +2,7 @@
 #
 #   ~/.config/cycler/config.yaml     (or $XDG_CONFIG_HOME/cycler/config.yaml, or $CYCLER_CONFIG)
 #
-# /cycler:setup writes this for you. There is no second file: the Linear credentials, the repo and
+# /cycler:start writes this for you. There is no second file: the Linear credentials, the repo and
 # the workflows all live here. ~/.cycler/ holds only state the poller writes — the refreshing OAuth
 # token, the processed-issue list, the launchd logs — and nothing you ever edit.
 #

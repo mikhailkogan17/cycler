@@ -35,7 +35,7 @@ node -e "const t=require(require('os').homedir()+'/.cycler/token.json');console.
 
 `access_token` AND `refresh_token` must both be present. Access tokens last ~24h; **without the
 refresh token the poller stops dispatching a day after setup and the symptom is a 401 that reads
-like a network fault.** If `refresh_token` is missing, re-run `/cycler:setup`.
+like a network fault.** If `refresh_token` is missing, re-run `/cycler:start`.
 
 ## 2. launchd label vs filename
 
@@ -85,7 +85,7 @@ Must exist. The `Workflow` tool refuses a script it cannot already read, so a pl
 work and this copy is what makes the escape hatch reachable. Missing it means a run told to use the
 full workflow has no way to comply — and the one time that happened, the run waived the guard.
 
-If it is missing, `/cycler:setup` step 4 installs it. Also compare it with the plugin's copy and say
+If it is missing, `/cycler:start` step 4 installs it. Also compare it with the plugin's copy and say
 if they differ: a stale copy is a workflow that silently is not the one you upgraded.
 
 ```bash
@@ -112,7 +112,7 @@ node "${CLAUDE_PLUGIN_ROOT}/poller/poller.mjs" 2>&1 | tail -1
 
 `poll ok: N delegated, M processed` — if `N` is 0 while the user believes issues are queued, they
 almost certainly **assigned** rather than **delegated**. `lin issue update --assignee` is the wrong
-field and dispatches nothing while looking correct. Point them at `/cycler:start <KEY>`.
+field and dispatches nothing while looking correct. Point them at `/cycler:issue <KEY>`.
 
 ## Report
 

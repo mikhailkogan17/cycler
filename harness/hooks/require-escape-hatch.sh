@@ -130,7 +130,7 @@ Why: one driver session carrying a large change grows its context monotonically,
 re-reads every earlier tool result. APL-41 ran inline past this same limit — 331 turns, context to
 216k, 61% of its cost in cache reads. Separate implementers keep their contexts small and disposable.
 
-If .claude/workflows/task-orchestration.js does not exist, run /cycler:setup to install it. Do NOT
+If .claude/workflows/task-orchestration.js does not exist, run /cycler:start to install it. Do NOT
 substitute a path inside the plugin — the Workflow tool only runs scripts it can already read, so a
 plugin path is refused and the run is left with no way to comply.
 

@@ -43,8 +43,8 @@ the session has been given — so a path inside the plugin is REFUSED:
 
     scriptPath must be a script path this tool returned, or a file you can already read ...
 
-`/cycler:setup` therefore copies the workflow into the repo at `.claude/workflows/`. If that file is
-missing, run `/cycler:setup`; do not substitute a plugin path, it will not run.
+`/cycler:start` therefore copies the workflow into the repo at `.claude/workflows/`. If that file is
+missing, run `/cycler:start`; do not substitute a plugin path, it will not run.
 
 **Escape hatch:** if the contract's "Files expected to change" exceeds ~8 files, or touches
 `apps/macOS/**`, do NOT continue inline. Run the full workflow instead and skip to step 7:

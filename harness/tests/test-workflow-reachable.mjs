@@ -11,7 +11,7 @@
 // that cannot be done. That run waived the escape hatch to get past it, which is the worst outcome
 // available: a guard talked out of existence by an instruction the guard itself printed.
 //
-// The workflow is therefore INSTALLED INTO THE REPO by /cycler:setup, and everything references the
+// The workflow is therefore INSTALLED INTO THE REPO by /cycler:start, and everything references the
 // repo-relative path.
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -47,16 +47,16 @@ t('the escape-hatch denial names the repo-relative workflow', () => {
 });
 
 t('the denial says what to do when the workflow is not installed', () => {
-  // A repo that has never run /cycler:setup has no .claude/workflows/. Naming a missing file without
+  // A repo that has never run /cycler:start has no .claude/workflows/. Naming a missing file without
   // saying how to get it is the same dead end one step later.
   const src = readFileSync(join(ROOT, 'harness/hooks/require-escape-hatch.sh'), 'utf8');
-  assert.ok(/cycler:setup/.test(src), 'the denial does not tell the reader how to install it');
+  assert.ok(/cycler:start/.test(src), 'the denial does not tell the reader how to install it');
 });
 
-t('setup installs the workflow into the repo', () => {
-  const src = readFileSync(join(ROOT, 'commands/setup.md'), 'utf8');
-  assert.ok(/\.claude\/workflows/.test(src), '/cycler:setup never installs the workflow');
-  assert.ok(/task-orchestration\.js/.test(src), '/cycler:setup does not name the workflow file');
+t('start installs the workflow into the repo', () => {
+  const src = readFileSync(join(ROOT, 'commands/start.md'), 'utf8');
+  assert.ok(/\.claude\/workflows/.test(src), '/cycler:start never installs the workflow');
+  assert.ok(/task-orchestration\.js/.test(src), '/cycler:start does not name the workflow file');
 });
 
 t('doctor checks the workflow is installed', () => {

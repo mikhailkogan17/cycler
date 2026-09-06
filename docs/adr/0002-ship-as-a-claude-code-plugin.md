@@ -24,7 +24,7 @@ interface:
 ```
 /plugin marketplace add mikhailkogan17/cycler
 /plugin install cycler@cycler
-/cycler:setup · :stop-polling · :start <KEY> · :doctor
+/cycler:start · :stop · :issue <KEY> · :doctor
 ```
 
 No CLI, no npm package, no global binary.
@@ -45,7 +45,7 @@ real edit pass across hooks, skills, docs and the workflow.
 changed to dispatch the namespaced form — a bare `/task` sends a session a literal string with no
 skill behind it, which fails silently and looks exactly like a session that ignored its prompt.
 
-**Worse:** macOS-only for now, because `/cycler:setup` writes a launchd job. Nothing else in
+**Worse:** macOS-only for now, because `/cycler:start` writes a launchd job. Nothing else in
 the design is platform-specific; a systemd unit would be the port.
 
 ## What would change this
