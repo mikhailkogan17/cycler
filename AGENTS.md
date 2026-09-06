@@ -40,9 +40,9 @@ cycler/
   README.md  AGENTS.md  LICENSE  cycler.example.yaml
   .claude-plugin/plugin.json      the plugin manifest
   commands/                       the only user interface — no CLI
-    setup.md  start-polling.md  stop-polling.md  start.md  doctor.md
+    start.md  stop.md  issue.md  doctor.md
   hooks/hooks.json                the four PreToolUse hooks, plugin-rooted
-  lib/yaml.mjs                    the cycler.yaml reader, shared by poller and hooks
+  lib/yaml.mjs                    the config reader, shared by poller and hooks
   poller/poller.mjs               the poller
   poller/lin  poller/lin-delegate the Linear CLI the harness falls back to
   skills/{task,research,intake}/SKILL.md
@@ -52,22 +52,36 @@ cycler/
     gate.sh                       the gate RESOLVER — the one gate command
     gate.default.sh               used only when the repo has no gate of its own
     audit.sh  file-followups.sh  link-workspace.sh  worktree-gc.sh
-    read-config.mjs               cycler.yaml, for the bash hooks
+    read-config.mjs               one config key, for the bash hooks
     hooks/  tests/
     CLAUDE.reference.md           template CLAUDE.md for a consuming repo
 ```
 
 ## 4. Interface
 
-Slash commands only — no CLI, no npm binary, no second install surface. `/cycler:setup`,
-`/cycler:start-polling`, `/cycler:stop-polling`, `/cycler:start <KEY>`, `/cycler:doctor`. They are
-command files that instruct the session to run the underlying bash.
+Slash commands only — no CLI, no npm binary, no second install surface. `/cycler:start`,
+`/cycler:stop`, `/cycler:issue <KEY>`, `/cycler:doctor`. They are command files that instruct the
+session to run the underlying bash. `/cycler:start` is idempotent by design: it checks what is
+already configured and does only the missing parts, so "set it up" and "switch the loop back on"
+are the same command. Two commands for those would mean a user who ran the wrong one gets a
+poller that is configured and not running.
 
 ## 5. Config
 
-`cycler.yaml` at the repo root, or `~/.cycler/cycler.yaml`. Committed on purpose: the branch prefix,
-the PR base and the escape hatch are facts about the repo. Secrets are not in it — the Linear client
-id, secret and token live in `~/.cycler/`.
+**One file:** `~/.config/cycler/config.yaml` (honours `$XDG_CONFIG_HOME`; `$CYCLER_CONFIG` overrides).
+Credentials, repo, workflows and dispatch all live there. It used to be two — a committed
+`cycler.yaml` in the repo plus `~/.cycler/config.json` for the OAuth credentials — and every question
+about cycler began with "which file?". Splitting a config by secrecy split it by nothing else:
+`repo.base` and `client_secret` are both typed once and never thought about again. Outside the repo,
+so nothing is one `git add .` from a public history.
+
+`~/.cycler/` survives but holds no config — only state the poller **writes**: `token.json`,
+`processed.json`, the launchd logs. A file a program rewrites every 24h cannot also be the file you
+hand-edit.
+
+Keys are canonically snake_case, and `pick()` resolves camelCase and kebab-case onto the same key. A
+key spelled the old way must not read as absent: `dispatch.pathPrepend` silently unread means a
+dispatched session with launchd's bare `PATH`, stalling on a missing `node`.
 
 `lib/yaml.mjs` parses the subset actually used: nested maps, scalars, inline lists, block lists, and
 block lists of maps. It never throws — a malformed config degrades to defaults rather than stopping a
@@ -86,7 +100,7 @@ Environment overrides exist for the values launchd needs to force without editin
 - **Delegate, not assignee.** `issues(filter: { delegate: { id: { eq: viewer.id } } })`. Assigning is
   a different field that looks right and dispatches nothing; `poller/lin-delegate` exists for that.
 - **Routing** is a lookup on a label a human already wrote — `research` → `/research`, everything
-  else → `routes.default`. Deliberately not a classifier: a model would infer, less reliably,
+  else → `workflows.default`. Deliberately not a classifier: a model would infer, less reliably,
   something already recorded, and a router that returns the default for everything is
   indistinguishable from a working one until something audits its choices.
 - **Dispatch** is a configurable template (`dispatch.command`), split like a shell would but
@@ -94,7 +108,7 @@ Environment overrides exist for the values launchd needs to force without editin
   after splitting, so a title can never introduce an argument. `--print` must never appear alongside
   `--background`: they conflict, `claude` exits 1, and it looks exactly like the agent never saw the
   issue.
-- **`dispatch.pathPrepend`** exists because launchd hands a job `/usr/bin:/bin:/usr/sbin:/sbin`. The
+- **`dispatch.path_prepend`** exists because launchd hands a job `/usr/bin:/bin:/usr/sbin:/sbin`. The
   session inherits it and cannot find `node`, `gh`, `claude` or `lin`. An interactive session never
   sees this, which is why it only appears once dispatch is automated.
 - **Every dispatch and every failure posts a comment.** Without the failure comment, a failed

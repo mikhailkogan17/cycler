@@ -92,7 +92,7 @@ One line per passing check; only failures print detail; the last line is `GATE: 
 
 **`--fast` and `--full` are your gate's distinction to make.** cycler's default gate runs the same
 checks either way; a repo gate typically keeps a slow suite out of `--fast`. Whatever you exclude,
-put it in `cycler.yaml` under `verify.steps` so the verify agent still runs it — a check that lives
+put it in the cycler config under `verify.steps` so the verify agent still runs it — a check that lives
 nowhere is a check nobody runs.
 
 Two things a slow suite teaches, from the repo this grew in: run it **serialized** if your DI

@@ -37,7 +37,6 @@ const ISSUE = {
 function poll({ script = {}, processed = null, pending = null, extraCfg = '' } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'cycler-home-'));
   const repo = mkdtempSync(join(tmpdir(), 'cycler-repo-'));
-  writeFileSync(join(home, 'config.json'), JSON.stringify({ clientId: 'cid', clientSecret: 'csec' }));
   writeFileSync(join(home, 'token.json'), JSON.stringify({ access_token: 'tok-1', refresh_token: 'refresh-1' }));
   if (processed) writeFileSync(join(home, 'processed.json'), JSON.stringify(processed));
   if (pending) writeFileSync(join(home, 'pending.json'), JSON.stringify(pending));
@@ -130,6 +129,34 @@ t('retries stop at maxAttempts instead of looping forever', () => {
   assert.strictEqual(p.spawns.length, 0, 'the poller kept re-dispatching past maxAttempts');
   assert.match(deadBody(p), /Not retrying/, 'giving up must be said out loud, not just done');
   assert.deepStrictEqual(p.processed, ['uuid-1'], 'a given-up issue stays processed');
+});
+
+t('dispatch.max_attempts is read from the config, in either spelling', () => {
+  // The two liveness keys were added reading ycfg.dispatch.startGraceSeconds directly, bypassing the
+  // fold-tolerant lookup every other key goes through. A key that reads as ABSENT restores the
+  // default silently — so a repo that configured its way out of duplicate sessions would get them
+  // anyway, and the test above would still pass because 3 is the default it happens to assert.
+  for (const spelling of ['max_attempts', 'maxAttempts', 'max-attempts']) {
+    const p = poll({ script: { issues: [ISSUE], issueComments: { 'uuid-1': [] } },
+      processed: ['uuid-1'], pending: stale({ attempts: 1 }), extraCfg: `  ${spelling}: 1\n` });
+    assert.strictEqual(p.spawns.length, 0, `${spelling} was ignored — it re-dispatched past the limit`);
+    assert.match(deadBody(p), /Not retrying/, `${spelling} was ignored`);
+  }
+  // The other direction: the SAME pending record retries under the default, or the assertions above
+  // would pass against a poller that never retries anything.
+  const dflt = poll({ script: { issues: [ISSUE], issueComments: { 'uuid-1': [] } },
+    processed: ['uuid-1'], pending: stale({ attempts: 1 }) });
+  assert.strictEqual(dflt.spawns.length, 1, 'attempt 1 of 3 must retry');
+});
+
+t('dispatch.start_grace_seconds is read from the config', () => {
+  // stale() ages the record past the DEFAULT grace. Widen the window past that age and the same
+  // record must stop being judged at all.
+  const p = poll({ script: { issues: [ISSUE], issueComments: { 'uuid-1': [] } },
+    processed: ['uuid-1'], pending: stale(), extraCfg: '  start_grace_seconds: 86400\n' });
+  assert.strictEqual(p.liveChecks.length, 0, 'a widened grace window was ignored');
+  assert.strictEqual(p.spawns.length, 0);
+  assert.strictEqual(p.pending.length, 1, 'it must still be tracked, not dropped');
 });
 
 t('an unanswerable liveness query keeps waiting rather than declaring a live run dead', () => {

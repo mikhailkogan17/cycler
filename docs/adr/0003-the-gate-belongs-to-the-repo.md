@@ -25,7 +25,7 @@ The gate is **resolved**, not owned. `harness/gate.sh` is a resolver:
 It `exec`s, so the chosen gate's output and exit status pass through unchanged and every caller sees
 the same output contract. It reports which gate it chose **on stderr**, never stdout.
 
-Checks too slow for a gate go in `cycler.yaml` under `verify.steps`, so the verify agent runs them.
+Checks too slow for a gate go in the cycler config under `verify.steps`, so the verify agent runs them.
 
 ## Consequences
 

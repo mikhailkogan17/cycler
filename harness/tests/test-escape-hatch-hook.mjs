@@ -35,14 +35,14 @@ function run(dir, file, env = {}) {
   }
 }
 
-// escapeHatch.paths is repo config now, not a hardcoded path. Written to a temp file so
+// escape_hatch.paths is config now, not a hardcoded path. Written to a temp file so
 // the two cases below differ ONLY in the config — which is what makes the pair able to go red on a
 // hook that ignores it.
 function configWith(paths) {
-  const f = join(mkdtempSync(join(tmpdir(), "cyclercfg-")), "cycler.yaml");
+  const f = join(mkdtempSync(join(tmpdir(), "cyclercfg-")), "config.yaml");
   writeFileSync(f, paths.length
-    ? "escapeHatch:\n  paths:\n" + paths.map((x) => "    - " + x).join("\n") + "\n"
-    : "escapeHatch:\n  maxFiles: 8\n");
+    ? "escape_hatch:\n  paths:\n" + paths.map((x) => "    - " + x).join("\n") + "\n"
+    : "escape_hatch:\n  max_files: 8\n");
   return { CYCLER_CONFIG: f };
 }
 const list = (n) => "## Files expected to change\n\n" +
@@ -79,7 +79,7 @@ check("more than 8 files is blocked", () => {
   rmSync(d, { recursive: true, force: true });
 });
 
-check("a path listed in escapeHatch.paths is blocked even when the contract is small", () => {
+check("a path listed in escape_hatch.paths is blocked even when the contract is small", () => {
   // APL-41's other trigger. One file, so the file COUNT cannot be what blocks it — the only thing
   // that can is the configured path.
   const d = fixture("## Files expected to change\n\n- `apps/macOS/App/A.swift`\n");
@@ -89,7 +89,7 @@ check("a path listed in escapeHatch.paths is blocked even when the contract is s
   rmSync(d, { recursive: true, force: true });
 });
 
-check("the same small contract is ALLOWED when escapeHatch.paths does not list it", () => {
+check("the same small contract is ALLOWED when escape_hatch.paths does not list it", () => {
   // The other half of the pair. Without this, a hook that blocked apps/macOS unconditionally — the
   // hardcoded behaviour cycler replaced — would still pass the case above.
   const d = fixture("## Files expected to change\n\n- `apps/macOS/App/A.swift`\n");

@@ -9,8 +9,8 @@ a gate and a review panel; a macOS feature done by hand skips all four.
 **First clear match wins.** Read top to bottom.
 
 The first two rows are **enforced, not advisory**: `poller/poller.mjs` reads the issue's
-labels and dispatches the workflow `routes.byLabel` names — `/cycler:research` for `Research` by
-default — falling back to `routes.default`, and names the route
+labels and dispatches the workflow the config's `workflows` map names — `/cycler:research` for
+`Research` by default — falling back to `workflows.default`, and names the route
 it chose in the dispatch comment. Until that existed the poller ran `/task` for everything, so this
 table was advice the only automated path ignored. The rest of the table is still judgement — it
 depends on things no label records, like whether an issue is too thin to contract from.

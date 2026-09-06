@@ -51,7 +51,7 @@ await t('verify no longer asks the model to plan and consolidate checks', async 
 
 await t('verify still owns what a fixed script cannot know', async () => {
   // Two things the gate cannot cover: the contract's own acceptance commands, and whatever slow
-  // check the repo deliberately kept out of --fast. The second is cycler.yaml's verify.steps now —
+  // check the repo deliberately kept out of --fast. The second is the config's verify.steps now —
   // it used to be one project's xcodebuild invocation, hardcoded here for everyone.
   const step = { when: 'apps/macOS/**', run: 'xcodebuild -scheme App test', notes: 'Pick ONE suite.' }
   const { responder, prompts } = recorder({ ...green })

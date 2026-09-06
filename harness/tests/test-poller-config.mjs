@@ -1,7 +1,7 @@
-// The poller reads cycler.yaml. These cases exist because the CONFIGURED branch of routing was
-// dead in every earlier test: with no config file present, `Array.isArray(cfg.routes?.byLabel)`
-// short-circuits and the code after it never runs — which is how a plain ReferenceError shipped and
-// was only found by an actual poll. A test that never loads a config cannot catch that.
+// The poller reads ~/.config/cycler/config.yaml. These cases exist because the CONFIGURED branch of
+// routing was dead in every earlier test: with no config file present, the guard short-circuits and
+// the code after it never runs — which is how a plain ReferenceError shipped and was only found by
+// an actual poll. A test that never loads a config cannot catch that.
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -14,7 +14,7 @@ const t = (n, fn) => fn().then(() => console.log('PASS', n),
   (e) => { fails++; console.log('FAIL', n, '\n  ', e.message) });
 
 function withConfig(yaml) {
-  const f = join(mkdtempSync(join(tmpdir(), 'cyclercfg-')), 'cycler.yaml');
+  const f = join(mkdtempSync(join(tmpdir(), 'cyclercfg-')), 'config.yaml');
   writeFileSync(f, yaml);
   process.env.CYCLER_CONFIG = f;
   return f;
@@ -23,19 +23,16 @@ function withConfig(yaml) {
 const CONFIG = `
 repo:
   path: ~/somewhere
-routes:
+workflows:
   default: /custom:default
-  byLabel:
-    - label: research
-      workflow: /custom:research
-    - label: spike
-      workflow: /custom:spike
+  research: /custom:research
+  spike: /custom:spike
 `;
 
 const f = withConfig(CONFIG);
 const m = await import(POLLER + '?cfg=1');
 
-await t('a configured byLabel route is used', async () => {
+await t('a configured label route is used', async () => {
   const r = m.workflowFor({ identifier: 'A-1', labels: { nodes: [{ name: 'Research' }] } });
   assert.strictEqual(r.workflow, '/custom:research');
 });
@@ -68,8 +65,8 @@ await t('a title with quotes and $ cannot introduce an argument', async () => {
 rmSync(dirname(f), { recursive: true, force: true });
 // The case that would have caught all three of them.
 //
-// Renaming the module-level config object left three stale references — routes.byLabel, then
-// routes.byLabel again, then dispatch.pathPrepend. Each was a plain ReferenceError, each crashed the
+// Renaming the module-level config object left three stale references — the routing table twice,
+// then the PATH list. Each was a plain ReferenceError, each crashed the
 // poller at import time, and each survived a full green suite, because every test wrote a MINIMAL
 // config that never reached the branch in question. The fix is not more unit cases: it is loading
 // the shipped example, which exercises every key at once, and reading a value out of each.

@@ -14,17 +14,20 @@ setup, and it handles issues nobody labelled.
 
 ## Decision
 
-Route by **label**, first match wins, from `cycler.yaml`:
+Route by **label**, first match wins, from the cycler config:
 
 ```yaml
-routes:
+workflows:
   default: /cycler:task
-  byLabel:
-    - label: research
-      workflow: /cycler:research
+  research: /cycler:research
 ```
 
-No model is involved in routing.
+Every key except `default` **is** a Linear label. No model is involved in routing.
+
+This started as `routes.default` plus a `routes.byLabel` list of `{label, workflow, why}` objects —
+three keys and a nesting level to express a one-line mapping. The `why` field is gone with it: the
+dispatch comment now reports the label that matched, which is the same information and cannot drift
+out of agreement with the route printed beside it.
 
 ## Consequences
 

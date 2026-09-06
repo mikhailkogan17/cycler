@@ -28,15 +28,17 @@ const issue = (o = {}) => ({
 function poll({ script = {}, cfg = null, token = {}, processed = null, env = {} } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'cycler-home-'));
   const repo = mkdtempSync(join(tmpdir(), 'cycler-repo-'));
-  writeFileSync(join(home, 'config.json'), JSON.stringify({ clientId: 'cid', clientSecret: 'csec' }));
   writeFileSync(join(home, 'token.json'), JSON.stringify({ access_token: 'tok-1', refresh_token: 'refresh-1', ...token }));
   if (processed) writeFileSync(join(home, 'processed.json'), JSON.stringify(processed));
   const scriptPath = join(home, 'script.json');
   const journal = join(home, 'journal.ndjson');
   writeFileSync(scriptPath, JSON.stringify(script));
   writeFileSync(journal, '');
-  const cfgPath = join(home, 'cycler.yaml');
-  const repoLine = `repo:\n  path: ${repo}\n`;
+  // The OAuth credentials are part of the ONE config file now, not a second config.json — so the
+  // refresh path in §1 exercises the same file every other key comes from.
+  const cfgPath = join(home, 'config.yaml');
+  const credLines = 'linear:\n  client_id: cid\n  client_secret: csec\n';
+  const repoLine = `${credLines}repo:\n  path: ${repo}\n`;
   writeFileSync(cfgPath, cfg ? cfg(repoLine) : repoLine);
 
   const r = spawnSync(process.execPath, ['--import', DOUBLE, POLLER], {
@@ -128,7 +130,7 @@ t('2.4 (other direction) a SUCCESSFUL dispatch IS marked processed', () => {
 
 // ─── §3 Routing ───────────────────────────────────────────────────────────────
 t('3.4 CYCLER_WORKFLOW overrides all routing, including a matching label', () => {
-  const cfg = (repo) => dispatchCfg(repo, 'routes:\n  default: /cycler:task\n  byLabel:\n    - label: research\n      workflow: /cycler:research\n');
+  const cfg = (repo) => dispatchCfg(repo, 'workflows:\n  default: /cycler:task\n  research: /cycler:research\n');
   const routed = poll({ script: { issues: [issue({ labels: ['research'] })] }, cfg });
   assert.match(routed.spawns[0].argv.join(' '), /\/cycler:research/, 'the label route did not apply');
   const forced = poll({ script: { issues: [issue({ labels: ['research'] })] }, cfg, env: { CYCLER_WORKFLOW: '/forced' } });
@@ -136,11 +138,18 @@ t('3.4 CYCLER_WORKFLOW overrides all routing, including a matching label', () =>
 });
 
 t('3.5 the chosen route AND the reason appear in the dispatch comment', () => {
-  const cfg = (repo) => dispatchCfg(repo, 'routes:\n  byLabel:\n    - label: research\n      workflow: /cycler:research\n      why: decision, not a diff\n');
+  // Both halves matter. Without the reason, a run routed to the wrong workflow looks identical to
+  // one routed correctly — you can see WHAT ran but not WHY, so you cannot tell a label typo from a
+  // deliberate default.
+  const cfg = (repo) => dispatchCfg(repo, 'workflows:\n  research: /cycler:research\n');
   const p = poll({ script: { issues: [issue({ labels: ['research'] })] }, cfg });
   const body = p.comments[0].variables.body;
   assert.match(body, /\/cycler:research/, 'the comment does not name the route');
-  assert.match(body, /decision, not a diff/, 'the comment does not give the REASON for the route');
+  assert.match(body, /label "research"/, 'the comment does not give the REASON for the route');
+
+  const dflt = poll({ script: { issues: [issue({ labels: ['chore'] })] }, cfg });
+  assert.match(dflt.comments[0].variables.body, /no routing label/,
+    'an unrouted issue must SAY it took the default, not silently look like a match');
 });
 
 // ─── §4 Dispatch ──────────────────────────────────────────────────────────────

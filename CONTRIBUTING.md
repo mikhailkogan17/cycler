@@ -86,7 +86,7 @@ not at all where it is.
 | `workflows/` | `task-orchestration.js`, the ten-phase workflow |
 | `skills/`, `commands/` | what a session and a user invoke |
 | `harness/` | gate resolver, default gate, hooks, docs, tests |
-| `lib/` | the `cycler.yaml` reader |
+| `lib/` | the config reader |
 | `docs/specs/`, `docs/adr/` | what should be true, and why it was decided that way |
 | `.claude/harness/gate.sh` | cycler's own gate — this repo eats its own dog food |
 

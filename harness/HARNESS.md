@@ -143,7 +143,7 @@ renaming is what turns a tracked worktree into an orphan.
 
 ### Worktree `node_modules` — the shadowing bug (APL-48 / APL-50 / APL-53)
 
-**Opt in with `worktree.linkWorkspace: true` in `cycler.yaml`.** Only an npm-workspace repo needs
+**Opt in with `worktree.link_workspace: true` in the cycler config.** Only an npm-workspace repo needs
 this step and only that repo knows it is one; unset, a worktree simply gets no `node_modules` step,
 which is what a Go, Python or Rust repo wants.
 
@@ -446,7 +446,7 @@ Two rules a repo gate must keep:
   Until the gate did, danger was advisory: its secrets and forbidden-path checks could not block a
   run, while every report said they had.
 
-Checks too slow for the gate belong in `cycler.yaml` under `verify.steps`, gated on the paths that
+Checks too slow for the gate belong in the cycler config under `verify.steps`, gated on the paths that
 make them apply. The verify agent runs them; the gate stays fast.
 
 ## Why this harness and not flow-next (decided 2026-09; see ADR 0002)

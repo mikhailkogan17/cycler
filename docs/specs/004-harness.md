@@ -10,7 +10,7 @@
 | # | Assertion | Test |
 |---|---|---|
 | 1.1 | A run with open questions stops and posts them rather than implementing a guess | `test-apl36.mjs` |
-| 1.2 | The branch is `<branchPrefix><ISSUE-KEY>`, off an up-to-date base | `test-apl35.mjs` |
+| 1.2 | The branch is `<repo.branch_prefix><ISSUE-KEY>`, off an up-to-date base | `test-apl35.mjs` |
 | 1.3 | The harness never commits onto the base branch | `test-apl35.mjs` |
 | 1.4 | It opens a PR and **never** merges | — untested |
 | 1.5 | An issue key is parsed from a bare key or a Linear URL | `test-apl35.mjs` |
@@ -25,7 +25,7 @@
 | 2.2 | A contract for a **different** issue does not satisfy the hook | `test-require-contract-hook.mjs` |
 | 2.3 | A commit with no green marker is denied | `test-require-green-gate-hook.mjs` |
 | 2.4 | A commit after an edit invalidating the marker is denied | `test-require-green-gate-hook.mjs` |
-| 2.5 | Editing past `escapeHatch` limits is denied, with the reason | `test-escape-hatch-hook.mjs` |
+| 2.5 | Editing past `escape_hatch` limits is denied, with the reason | `test-escape-hatch-hook.mjs` |
 | 2.6 | An explicit waiver in the contract re-opens the escape hatch | `test-escape-hatch-hook.mjs` |
 | 2.7 | A write outside the session's worktree is denied | `test-confine-to-worktree.mjs` |
 | 2.8 | The plan-mode plan file is exempt from 2.7 | `test-confine-to-worktree.mjs` |
@@ -42,7 +42,7 @@ so a concurrent run's contract judged this run's edit.
 | 3.2 | `worktree: true` gives the run its own git worktree | `test-apl45.mjs` |
 | 3.3 | A shared-tree run leaks no worktree path into its prompts | `test-apl45.mjs` |
 | 3.4 | Cleanup reports the lock as *possibly held* when it cannot confirm release | `test-apl45.mjs` |
-| 3.5 | With `worktree.linkWorkspace`, the worktree gets a **real** `node_modules` | `test-worktree-node-modules.mjs` |
+| 3.5 | With `worktree.link_workspace`, the worktree gets a **real** `node_modules` | `test-worktree-node-modules.mjs` |
 | 3.6 | The prompt names the forbidden symlink **only** inside a prohibition | `test-worktree-node-modules.mjs` |
 
 3.6 is unusual and worth keeping: the prompt must mention `ln -s "$P/node_modules"` in order to forbid

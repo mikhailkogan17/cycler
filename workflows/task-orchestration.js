@@ -78,7 +78,7 @@ export const meta = {
 // repo-reading stage must interpolate `runCwd`, never `repoRoot`, or it reads a tree that is not the
 // one being changed. It is reassigned exactly once, by the Branch stage; the stage prompts are template
 // literals inside functions, so they pick up the final value at call time.
-// cycler: no hardcoded checkout. args.cwd is what the /task skill passes from cycler.yaml
+// cycler: no hardcoded checkout. args.cwd is what the /task skill passes from the config
 // (repo.path). There is deliberately no fallback: the Workflow runtime exposes args/agent/parallel/
 // pipeline/log/phase/budget and NOTHING else — no `process`, so the `process.cwd()` fallback that
 // used to sit here was a ReferenceError on the first line of every unattended run, before a single
@@ -87,7 +87,7 @@ export const meta = {
 if (!args?.cwd) {
   throw new Error(
     'task-orchestration: args.cwd is required (the repo checkout to work in). ' +
-      'The /cycler:task skill reads it from cycler.yaml repo.path; pass it explicitly for a direct call.'
+      'The /cycler:task skill reads it from the cycler config (repo.path); pass it explicitly for a direct call.'
   )
 }
 const repoRoot = args.cwd
@@ -102,15 +102,26 @@ if (!args?.pluginRoot) {
   )
 }
 const PLUGIN_ROOT = args.pluginRoot
-// The repo's cycler.yaml, parsed and passed in by the /task skill. Everything project-specific lives
+// The cycler config, parsed and passed in by the /task skill. Everything project-specific lives
 // here rather than in this file: the workflow used to name one project's Xcode schemes and npm
 // workspace layout in every prompt of every run, in every repo that installed it.
 const config = args?.config || {}
 
-// cycler.yaml: worktree.linkWorkspace. Only an npm-workspace repo needs this, and only that repo
+// Keys are canonically snake_case, but `link_workspace`, `linkWorkspace` and `link-workspace` all
+// resolve — the same tolerance lib/yaml.mjs applies, restated here because a Workflow script runs in
+// a sandbox and cannot import it. A key spelled the old way must not read as "feature not enabled".
+const cfg = (obj, dotted) => dotted.split('.').reduce((cur, part) => {
+  if (!cur || typeof cur !== 'object') return undefined
+  if (part in cur) return cur[part]
+  const want = part.toLowerCase().replace(/[-_]/g, '')
+  const hit = Object.keys(cur).find((k) => k.toLowerCase().replace(/[-_]/g, '') === want)
+  return hit === undefined ? undefined : cur[hit]
+}, obj)
+
+// config: worktree.link_workspace. Only an npm-workspace repo needs this, and only that repo
 // knows it is one. Unset, a worktree simply has no node_modules step — which is correct for a Go,
 // Python or Rust repo and was previously impossible to express.
-const linkWorkspaceStep = config?.worktree?.linkWorkspace
+const linkWorkspaceStep = cfg(config, 'worktree.link_workspace')
   ? `
 Then make the gate runnable — 'node_modules' is untracked, so a fresh worktree has none and every
 lint/test check would fail on a missing module rather than on the code:
@@ -128,24 +139,25 @@ If it exits non-zero, report ok:false with its stderr in 'error'. Do NOT continu
 node_modules: that is precisely the shadowed state above, and Verify would hit it as a mystery red.`
   : ''
 
-// cycler.yaml: worktree.bootstrap — one command a fresh worktree needs before anything can build,
+// config: worktree.bootstrap — one command a fresh worktree needs before anything can build,
 // for the things git does not carry: a gitignored config rendered from an example, a generated
 // artifact, a native dependency. Advisory by design: a worktree whose diff never touches that
 // toolchain must not be blocked because the toolchain is absent.
 //
 // This replaced a hardcoded tail on link-workspace.sh that created one project's Secrets.xcconfig
 // and ran its `npm run sidecar` — real needs, but that project's, executed in everyone's worktree.
-const bootstrapStep = config?.worktree?.bootstrap
+const bootstrap = cfg(config, 'worktree.bootstrap')
+const bootstrapStep = bootstrap
   ? `
 Then run this repo's worktree bootstrap, from "$W":
-  ${config.worktree.bootstrap}
+  ${bootstrap}
 It covers what git does not carry — a gitignored config rendered from its example, a generated
 artifact, a native dependency. It is ADVISORY and never fatal: if it fails, report the failure in
 'notes' and CONTINUE. A worktree whose diff does not touch that toolchain must not be blocked
 because the toolchain is missing, and Verify will surface it as a real red if it does matter.`
   : ''
 
-// cycler.yaml: verify.steps — checks a repo needs that its gate deliberately leaves out, usually
+// config: verify.steps — checks a repo needs that its gate deliberately leaves out, usually
 // because they are slow enough that putting them in --fast would push people back to running them by
 // hand. Each entry is { when, run, notes? }: `when` is the path glob that makes the step apply,
 // `run` the command, `notes` the prose an agent needs in order not to get it wrong.
@@ -153,8 +165,9 @@ because the toolchain is missing, and Verify will surface it as a real red if it
 // This replaced a hardcoded block naming one project's Xcode project, schemes and test target. That
 // block was gated on a path no other repo has, so it never RAN elsewhere — it was simply carried, in
 // every verify prompt of every run, telling a stranger's agent about a codebase that is not theirs.
-const verifySteps = (Array.isArray(config?.verify?.steps) && config.verify.steps.length)
-  ? config.verify.steps.map((st, i) => `## Step ${3 + i} — ONLY if ${st.when} changed
+const configuredVerify = cfg(config, 'verify.steps')
+const verifySteps = (Array.isArray(configuredVerify) && configuredVerify.length)
+  ? configuredVerify.map((st, i) => `## Step ${3 + i} — ONLY if ${st.when} changed
 
 The gate deliberately excludes this. From \${runCwd}:
 
@@ -187,8 +200,8 @@ const fixMax = args?.fixMax || 2
 // `blocked` result. Each loop now counts only its own rounds.
 const gateFixMax = args?.gateFixMax ?? fixMax
 const reviewFixMax = args?.reviewFixMax ?? fixMax
-const prBase = args?.prBase || 'main'                       // cycler.yaml: repo.base
-const branchPrefix = args?.branchPrefix || 'claude/'        // cycler.yaml: repo.branchPrefix
+const prBase = args?.prBase || 'main'                       // config: repo.base
+const branchPrefix = args?.branchPrefix || 'claude/'        // config: repo.branch_prefix
 // APL-36: Linear write-back. Off automatically when the run has no Linear issue key; force off with
 // args.linear: false (useful for dry runs and for the harness's own self-edits).
 const linearOff = args?.linear === false
@@ -1008,7 +1021,7 @@ async function runVerify() {
   //
   // The agent still exists for the two things a fixed script cannot know: the contract's own
   // task-specific Acceptance commands, and whatever slow check the repo deliberately kept out of the
-  // gate (cycler.yaml: verify.steps).
+  // gate (config: verify.steps).
   //
   // Trust boundary unchanged: the agent reports per-check booleans; the SCRIPT computes allGreen from
   // them, so a summary verdict cannot override a failed check.

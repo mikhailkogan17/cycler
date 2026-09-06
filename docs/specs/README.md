@@ -9,7 +9,7 @@ being able to run `grep -c untested docs/specs/*.md` and see the size of the gap
 | spec | covers |
 |---|---|
 | [001-poller](001-poller.md) | trigger: auth, selection, routing, dispatch, reporting |
-| [002-config](002-config.md) | `cycler.yaml`: keys, defaults, parsing |
+| [002-config](002-config.md) | `~/.config/cycler/config.yaml`: keys, defaults, parsing |
 | [003-gate](003-gate.md) | gate resolution, the output contract, the pass marker |
 | [004-harness](004-harness.md) | the ten phases, the hooks, review and follow-ups |
 

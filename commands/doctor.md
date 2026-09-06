@@ -1,11 +1,31 @@
 ---
-description: Diagnose a cycler install — token, launchd job, paths, gate, and the delegate trap.
+description: Diagnose a cycler install — config, token, launchd job, paths, gate, and the delegate trap.
 ---
 
 Run every check below and report each as OK or the specific failure. Do not stop at the first
 failure; a partial diagnosis sends people to fix the wrong thing.
 
-These are the six things that have actually broken, not a generic checklist.
+These are the eight things that have actually broken, not a generic checklist.
+
+## 0. The config file
+
+```bash
+node -e "import('${CLAUDE_PLUGIN_ROOT}/lib/yaml.mjs').then(m=>console.log(m.configPath()||'NONE'))"
+```
+
+There is exactly one, `~/.config/cycler/config.yaml`, and everything else here reads from it. `NONE`
+means every value below is a default — `repo.path` is `~/your-repo`, and the poller has no
+credentials to refresh a token with. Report which file was found, by path.
+
+Also check the credentials parse out of it — an empty value here is a poller that works until the
+first token expiry and then stops:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" linear.client_id MISSING
+node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" linear.client_secret MISSING
+```
+
+Report whether each is present. **Do not print the secret** — say `present` or `MISSING`.
 
 ## 1. Token — the 24h cliff
 
@@ -15,7 +35,7 @@ node -e "const t=require(require('os').homedir()+'/.cycler/token.json');console.
 
 `access_token` AND `refresh_token` must both be present. Access tokens last ~24h; **without the
 refresh token the poller stops dispatching a day after setup and the symptom is a 401 that reads
-like a network fault.** If `refresh_token` is missing, re-run `/cycler:setup`.
+like a network fault.** If `refresh_token` is missing, re-run `/cycler:start`.
 
 ## 2. launchd label vs filename
 
@@ -53,11 +73,7 @@ REPO="$(node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" repo.path "$PWD")"
 git -C "$REPO" rev-parse --show-toplevel
 ```
 
-Must resolve to a git repo. Also confirm `cycler.yaml` is found:
-
-```bash
-node -e "import('${CLAUDE_PLUGIN_ROOT}/lib/yaml.mjs').then(m=>console.log(m.configPath()||'NONE'))"
-```
+Must resolve to a git repo.
 
 ## 5. The workflow is installed in the repo
 
@@ -69,7 +85,7 @@ Must exist. The `Workflow` tool refuses a script it cannot already read, so a pl
 work and this copy is what makes the escape hatch reachable. Missing it means a run told to use the
 full workflow has no way to comply — and the one time that happened, the run waived the guard.
 
-If it is missing, `/cycler:setup` step 4 installs it. Also compare it with the plugin's copy and say
+If it is missing, `/cycler:start` step 4 installs it. Also compare it with the plugin's copy and say
 if they differ: a stale copy is a workflow that silently is not the one you upgraded.
 
 ```bash
@@ -96,7 +112,7 @@ node "${CLAUDE_PLUGIN_ROOT}/poller/poller.mjs" 2>&1 | tail -1
 
 `poll ok: N delegated, M processed` — if `N` is 0 while the user believes issues are queued, they
 almost certainly **assigned** rather than **delegated**. `lin issue update --assignee` is the wrong
-field and dispatches nothing while looking correct. Point them at `/cycler:start <KEY>`.
+field and dispatches nothing while looking correct. Point them at `/cycler:issue <KEY>`.
 
 ## Report
 

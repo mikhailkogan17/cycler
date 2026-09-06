@@ -91,12 +91,12 @@ FILES="$(section "Files expected to change")"
 [ -n "$FILES" ] || FILES="$(section "Allowed paths")"
 COUNT="$(printf '%s\n' "$FILES" | sed '/^$/d' | wc -l | tr -d ' ')"
 
-# cycler.yaml: escapeHatch.maxFiles (default 8) and escapeHatch.paths (default: none). The path list
+# config: escape_hatch.max_files (default 8) and escape_hatch.paths (default: none). The path list
 # is where a repo names the areas that are expensive to work inline — a macOS app might use apps/macOS/**,
 # because an Xcode build inside a driver session is the single most context-hungry thing it does.
 READ_CFG="$(dirname "$0")/../read-config.mjs"
-MAX_FILES="$(node "$READ_CFG" escapeHatch.maxFiles 8 2>/dev/null || echo 8)"
-HEAVY_PATHS="$(node "$READ_CFG" escapeHatch.paths '' 2>/dev/null || true)"
+MAX_FILES="$(node "$READ_CFG" escape_hatch.max_files 8 2>/dev/null || echo 8)"
+HEAVY_PATHS="$(node "$READ_CFG" escape_hatch.paths '' 2>/dev/null || true)"
 
 HEAVY=0
 HEAVY_HIT=""
@@ -130,7 +130,7 @@ Why: one driver session carrying a large change grows its context monotonically,
 re-reads every earlier tool result. APL-41 ran inline past this same limit — 331 turns, context to
 216k, 61% of its cost in cache reads. Separate implementers keep their contexts small and disposable.
 
-If .claude/workflows/task-orchestration.js does not exist, run /cycler:setup to install it. Do NOT
+If .claude/workflows/task-orchestration.js does not exist, run /cycler:start to install it. Do NOT
 substitute a path inside the plugin — the Workflow tool only runs scripts it can already read, so a
 plugin path is refused and the run is left with no way to comply.
 
