@@ -218,7 +218,7 @@ Spec → failing test → code → gate, in that order. [`CONTRIBUTING.md`](CONT
 
 ## Author
 
-**[Mikhail Kogan](https://github.com/mikhailkogan17)** — iOS/platform engineer, Tel Aviv.
+**[Mikhail Kogan](https://github.com/mikhailkogan17)**
 
 ## License
 
