@@ -37,14 +37,17 @@ The session comments when it starts, when it has open questions, and when the PR
 
 ## Alternatives
 
-Nothing else does all three: assignable as a Linear agent, running locally, with a real workflow
-behind it.
+The board can hand work to plenty of agents. What cycler does differently is run it with **no hosted
+component in the path** — no hub, no relay, no account beyond your own Linear app — and install as a
+Claude Code plugin rather than a service you deploy and keep alive.
 
 | Project | |
 |---|---|
-| [**cyrus**](https://github.com/cyrusagents/cyrus) | Its own harness and its own child agents. High token cost, workflow you don't control. |
-| [**agent-acp-bridge**](https://github.com/larryhudson/agent-acp-bridge) | Transport without the workflow on top — no contract, gate, audit, review. |
-| [**flow-next**](https://github.com/gmickel/flow-next) | *You* start every run. Nothing binds a Linear agent to it, so the board never hands work over. |
+| [**cyrus**](https://github.com/cyrusagents/cyrus) | Its own harness and its own child agents. BYOK, so its token cost is yours, and the workflow isn't. Paid tiers route through their cloud. |
+| [**Symphony**](https://github.com/openai/symphony) | Also polls the board — but Codex only, and it ships as a spec plus an Elixir reference implementation, not something you install. |
+| [**Multica**](https://github.com/multica-ai/multica) | A self-hostable workspace you run and operate. Drives 20 agent CLIs; the setup is a platform, not a plugin. |
+| [**zeroshot**](https://github.com/the-open-engine/zeroshot) | Planner, implementer and validators looping until verified. Strong on verification, but you point it at an issue — the board doesn't delegate to it. |
+| [**flow-next**](https://github.com/gmickel/flow-next) | Syncs specs to Linear two-way, but *you* start every run. The board can't trigger one. |
 | **Copilot / Codex Linear Agent** | Cloud execution only. No choice of gate, no choice of workflow, and your repo leaves your machine. |
 
 ---
