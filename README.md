@@ -7,7 +7,7 @@
   </picture>
 </p>
 
-<h1 align="center">Assign a Linear issue to Claude. Get a gated pull request back.</h1>
+<h1 align="center">Assign an issue to a local harness. Get a gated pull request back.</h1>
 
 <p align="center">
   On your machine · your harness · your gate · no cloud, no webhook, no tunnel
@@ -33,6 +33,108 @@ A Claude Code plugin with three parts:
 
 You assign the issue and close the tab. The session comments when it starts, when it has open
 questions, and when the PR is up. **It never merges** — every change still passes a human.
+
+## Alternatives
+
+Nothing else does all three: assignable as a Linear agent, running locally, with a real workflow
+behind it.
+
+| | |
+|---|---|
+| [**cyrus**](https://github.com/cyrusagents/cyrus) | Its own harness and its own child agents. High token cost, workflow you don't control. |
+| [**agent-acp-bridge**](https://github.com/larryhudson/agent-acp-bridge) | Transport without the workflow on top — no contract, gate, audit, review. |
+| [**flow-next**](https://github.com/gmickel/flow-next) | *You* start every run. Nothing binds a Linear agent to it, so the board never hands work over. |
+| **Copilot / Codex on Linear** | Cloud execution only. No choice of gate, no choice of workflow, and your repo leaves your machine. |
+
+---
+
+## Install
+
+**Requirements:** macOS · Node 18+ · [Claude Code](https://claude.com/claude-code) · a Linear
+workspace you can create an OAuth application in.
+
+In Claude Code — these are slash commands, not shell:
+
+```
+/plugin marketplace add mikhailkogan17/cycler
+/plugin install cycler@cycler
+/cycler:start
+```
+
+`/cycler:start` does the rest: the Linear OAuth application, the authorisation, the config, the
+workflow file, a gate check, one verified poll, and the launchd job. Run it again any time — it
+checks what is already done and fills only the gaps.
+
+Then, in Linear, assign an issue to the Claude agent.
+
+## Usage
+### Commands
+| command | does |
+|---|---|
+| `/cycler:start` | set up whatever is missing, then start polling |
+| `/cycler:stop` | unload the launchd job |
+| `/cycler:delegate <KEY>` | put one issue on the agent and dispatch it now   |
+| `/cycler:doctor` | diagnose the seven things that actually break |
+
+`/cycler:delegate` is the same as the board's assign button.
+
+> [!CAUTION]
+> **Anyone who can assign an issue to the agent can run code on your machine.**
+> The issue becomes the prompt of a Claude Code session in your repo.
+> On a shared one, restrict who can assign your issues to an agent.
+
+### Workflows
+| workflow | for |
+|---|---|
+| `/cycler:workflow-feature` | a feature, improvement, tech debt or bug — contract → implement → audit → gate → PR |
+| `/cycler:workflow-bug` | the same lifecycle in fix mode: the regression test comes before the fix |
+| `/cycler:workflow-research` | a question whose deliverable is a decision, not a diff. No contract, no gate |
+| `/cycler:workflow-intake` | writing a contract by hand first, then handing it to `workflow-feature`. Optional |
+
+> [!IMPORTANT]
+> The poller runs these for you, inside the dispatched session. You can also run one here, in the
+> **current** session, on an issue that was never assigned to the agent.
+
+---
+
+## Config
+
+One file, outside your repo: `~/.config/cycler/config.yaml`.
+
+```yaml
+linear:
+  client_id: ********
+  client_secret: ********
+
+repo:
+  path: ~/your-repo
+  base: main
+  branch_prefix: claude/
+
+workflows:
+  default:  /cycler:workflow-feature   # contract → implement → audit → gate → PR
+  bug:      /cycler:workflow-bug       # the same, in fix mode
+  research: /cycler:workflow-research  # a decision, not a diff
+
+dispatch:
+  command: >
+    claude --background --name "{session}" --remote-control "{session}"
+    --remote-control-session-name-prefix linear --permission-mode auto
+    --append-system-prompt "Started by cycler for {issue}" "{workflow} {issue}"
+  path_prepend: [~/.local/bin, ~/bin, /opt/homebrew/bin, /usr/local/bin]
+```
+
+Every key is optional and every default works. `workflows` is a label → workflow map: add a Linear
+label as a key and issues carrying it route there.
+
+[**Example**](cycler.example.yaml)  |  [**Full reference**](docs/specs/002-config.md)
+
+**The gate is yours.** cycler runs `.claude/harness/gate.sh` from your repo when it exists, and
+otherwise falls back to `lint`, `build` and `test` from `package.json`. Copy
+[`harness/gate.default.sh`](harness/gate.default.sh) and replace the checks; what you inherit is the
+runner. A repo with no gate and no lint/build/test script reports **FAIL**, not a pass.
+
+---
 
 ## How it works
 
@@ -67,123 +169,8 @@ Nothing listens on your machine. The poller makes one outbound request every 180
 calls a model — every token is spent by the session you configured, with your model, your
 permissions, your harness.
 
-## Motivation
-
-Nothing did these three at once:
-
-- **assignable as a Linear agent** — the board hands work over, you don't start every run;
-- **local execution**, on your laptop, in the harness you already pay for;
-- **a real workflow** — contract, gate, audit, review — not a prompt relay.
-
-**Existing alternatives:**
-
-| | |
-|---|---|
-| [**cyrus**](https://github.com/cyrusagents/cyrus) | Its own harness and its own child agents. High token cost, workflow you don't control. |
-| [**agent-acp-bridge**](https://github.com/larryhudson/agent-acp-bridge) | Transport without the workflow on top — no contract, gate, audit, review. |
-| [**flow-next**](https://github.com/gmickel/flow-next) | *You* start every run. Nothing binds a Linear agent to it, so the board never hands work over. |
-| **Copilot / Codex on Linear** | Cloud execution only. No choice of gate, no choice of workflow, and your repo leaves your machine. |
-
----
-
-## Install
-
-**Requirements:** macOS · Node 18+ · [Claude Code](https://claude.com/claude-code) · a Linear
-workspace you can create an OAuth application in.
-
-In Claude Code — these are slash commands, not shell:
-
-```
-/plugin marketplace add mikhailkogan17/cycler
-/plugin install cycler@cycler
-/cycler:start
-```
-
-`/cycler:start` does the rest: the Linear OAuth application, the authorisation, the config, the
-workflow file, a gate check, one verified poll, and the launchd job. Run it again any time — it
-checks what is already done and fills only the gaps.
-
-Then, in Linear, assign an issue to the Claude agent.
-
-## Usage
-
-Four commands, all run by you:
-
-| command | does |
-|---|---|
-| `/cycler:start` | set up whatever is missing, then start polling |
-| `/cycler:stop` | unload the launchd job |
-| `/cycler:delegate <KEY>` | put one issue on the agent and dispatch it now   |
-| `/cycler:doctor` | diagnose the seven things that actually break |
-
-`/cycler:delegate` is the board's assign button, from the terminal you are already in. The work still
-happens in a separate background session — it does not run here.
-
-### Workflows
-
-The other half of the namespace. These are **not** commands you run: they run inside the dispatched
-session, named in `workflows` and dispatched by the poller. The `workflow-` prefix is there so one
-look at the list tells you which half you are in.
-
-| workflow | for |
-|---|---|
-| `/cycler:workflow-feature` | a feature, improvement, tech debt or bug — contract → implement → audit → gate → PR |
-| `/cycler:workflow-bug` | the same lifecycle in fix mode: the regression test comes before the fix |
-| `/cycler:workflow-research` | a question whose deliverable is a decision, not a diff. No contract, no gate |
-| `/cycler:workflow-intake` | writing a contract by hand first, then handing it to `workflow-feature`. Optional |
-
-> [!IMPORTANT]
-> **Anyone who can assign an issue to the agent can run code on your machine.** The issue becomes
-> the prompt of a Claude Code session in your repo, by default with `--permission-mode auto`. Treat
-> that as repository write access plus a shell. On a solo workspace this is a non-issue; on a shared
-> one, restrict who can assign to the agent. The mitigations — a shell-free dispatch, contract path
-> limits, worktree confinement, and never merging — are real but are not a substitute for trusting
-> the people who can assign to it.
-
----
-
-## Config
-
-One file, outside your repo: `~/.config/cycler/config.yaml`.
-
-```yaml
-linear:
-  client_id: ********
-  client_secret: ********
-
-repo:
-  path: ~/your-repo
-  base: main
-  branch_prefix: claude/
-
-workflows:
-  default: /cycler:workflow-feature        # contract → implement → audit → gate → PR
-  research: /cycler:workflow-research   # a decision, not a diff
-
-dispatch:
-  command: >
-    claude --background --name "{session}" --remote-control "{session}"
-    --remote-control-session-name-prefix linear --permission-mode auto
-    --append-system-prompt "Started by cycler for {issue}" "{workflow} {issue}"
-  path_prepend: [~/.local/bin, ~/bin, /opt/homebrew/bin, /usr/local/bin]
-```
-
-Every key is optional and every default works. `workflows` is a label → workflow map: add a Linear
-label as a key and issues carrying it route there.
-
-[**Example**](cycler.example.yaml)  |  [**Full reference**](docs/specs/002-config.md)
-
-**The gate is yours.** cycler runs `.claude/harness/gate.sh` from your repo when it exists, and
-otherwise falls back to `lint`, `build` and `test` from `package.json`. Copy
-[`harness/gate.default.sh`](harness/gate.default.sh) and replace the checks; what you inherit is the
-runner. A repo with no gate and no lint/build/test script reports **FAIL**, not a pass.
-
----
-
-## How the session works
-
 <details>
-<summary>The part worth reading if you are evaluating the engineering</summary>
+<summary>Design notes</summary>
 
 - **The contract comes first.** Goal, non-goals, allowed and forbidden paths, acceptance checks as
   exact commands. Every requirement line carries a provenance tag — `[user]`, `[paraphrase]`,
@@ -222,17 +209,6 @@ behavioural spec each part is written against.
 | Job loaded, nothing happens | `launchctl` addresses jobs by **label**; the plist filename has to match it |
 | Session stalls asking where `node` is | launchd's bare `PATH` — set `dispatch.path_prepend` |
 | The gate always passes | no `.claude/harness/gate.sh` and no lint/build/test script |
-
----
-
-## Similar projects
-
-- [**cyrus**](https://github.com/cyrusagents/cyrus) — the Claude Code background agent for Linear,
-  Slack, GitHub and GitLab, deployable anywhere
-- [**agent-acp-bridge**](https://github.com/larryhudson/agent-acp-bridge) — talk to Claude Code and
-  other ACP agents from Linear, Slack and GitHub
-- [**flow-next**](https://github.com/gmickel/flow-next) — repeatable agentic engineering: durable
-  specs, fresh-context workers, adversarial cross-model review
 
 ---
 
