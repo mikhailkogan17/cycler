@@ -1,11 +1,11 @@
 ---
-description: Diagnose a cycler install — config, token, launchd job, paths, repo, workflow and gate.
+description: Diagnose a cycler install — config, token, launchd job, paths, repo, workflow, routes and gate.
 ---
 
 Run every check below and report each as OK or the specific failure. Do not stop at the first
 failure; a partial diagnosis sends people to fix the wrong thing.
 
-These are the seven things that have actually broken, not a generic checklist.
+These are the eight things that have actually broken, not a generic checklist.
 
 ## 0. The config file
 
@@ -101,6 +101,35 @@ bash "${CLAUDE_PLUGIN_ROOT}/harness/gate.sh" --fast 2>&1 >/dev/null | head -1
 
 Report the repo's own gate or cycler's default **by name**. A repo with real checks that is silently
 running the default gate is passing on less than the user thinks.
+
+## 7. Every configured route names a workflow that exists
+
+```bash
+node -e '
+  const { readdirSync } = require("node:fs");
+  const { execFileSync } = require("node:child_process");
+  const root = process.env.CLAUDE_PLUGIN_ROOT;
+  const cfg = JSON.parse(execFileSync("node", [root + "/harness/read-config.mjs", "--json"], { encoding: "utf8" }) || "{}");
+  const have = new Set(readdirSync(root + "/skills"));
+  const routes = Object.entries(cfg.workflows || {}).filter(([, v]) => typeof v === "string");
+  if (!routes.length) { console.log("routes:   none configured — the built-in defaults apply"); process.exit(0) }
+  for (const [label, wf] of routes) {
+    const name = wf.replace(/^\/cycler:/, "");
+    console.log((have.has(name) ? "OK    " : "STALE ") + "  " + label + ": " + wf);
+  }
+'
+```
+
+Every route must print `OK`. A route naming a workflow that does not exist dispatches a slash command
+with nothing behind it: the session starts, finds no skill, and improvises — the board shows a run,
+and nobody learns the route was dead.
+
+This is the check the `workflow-` rename needed and did not have. The `task`, `research` and
+`intake` skills became `workflow-feature`, `workflow-research` and `workflow-intake` in 0.2.0, and a
+config written before that upgrade still routes to the old names. **An installed plugin is pinned to
+its version**, so until the version string changes the old skills are still on disk and the stale
+route resolves anyway — it breaks on the upgrade, not on the config edit that caused it. If a route
+is stale, say which line of the config to change, and to what.
 
 ## Report
 

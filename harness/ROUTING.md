@@ -23,7 +23,7 @@ depends on things no label records, like whether an issue is too thin to contrac
 | labelled `Research`, or its deliverable is a decision rather than a diff | **`/workflow-research`** | Nothing to gate, nothing to audit, no diff to review. ~80-120k. |
 | a one-line fix, a typo, a version bump | **do it directly** | Contract + audit + review costs more than the change. The gate hook still applies. |
 | too thin to state acceptance checks without guessing | **stop and ask** | Documented in `ISSUE-PROCESS.md`. A guess costs more than a question. |
-| a `Bug` with a reproducible symptom | **`/workflow-feature`** | `modes/fix.md`. The regression test is the deliverable. There is no `/workflow-bug`; the mode is chosen inside the run. |
+| a `Bug` with a reproducible symptom | **`/workflow-bug`** | An alias: it posts the marker, then runs `/workflow-feature` in `modes/fix.md`. The regression test is the deliverable. |
 | a `Feature` / `Improvement` / `Tech Debt` with a clear spec | **`/workflow-feature`** | `modes/build.md`. |
 | >8 files, or touching `apps/macOS/**` | **`/workflow-feature` with `worktree: true`** | The escape hatch in `ISSUE-PROCESS.md`. macOS needs `--full` or a hand-run Swift suite either way. |
 

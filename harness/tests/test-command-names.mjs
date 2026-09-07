@@ -16,7 +16,8 @@
 // This file caught the real shape of the problem once already: /cycler:setup, /cycler:start-polling
 // and /cycler:stop-polling collapsed into /cycler:start + /cycler:stop, and fourteen files named the
 // old ones.
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -127,6 +128,45 @@ t('an alias delegates rather than copying the workflow it aliases', () => {
     assert.ok(a.length < t.length / 2,
       `skills/${alias} is ${a.length} chars against ${target}'s ${t.length} — that is a copy, not an alias`);
   }
+});
+
+t('doctor catches a route naming a workflow that does not exist', () => {
+  // This is the check the workflow- rename needed and did not have. A live config written before
+  // the rename still says /cycler:task, and a version-pinned install hides it — the old skills are
+  // still on disk until the version string changes, so the route resolves right up until the
+  // upgrade that removes them, and breaks there. Running the check is what
+  // proves it, not reading it: an earlier draft called `read-config.mjs workflows --json`, where
+  // --json is parsed as the FALLBACK, and it printed "[object Object]" for every config.
+  const src = readFileSync(join(ROOT, 'commands/doctor.md'), 'utf8');
+  const block = /## 7\.[\s\S]*?```bash\n([\s\S]*?)```/.exec(src);
+  assert.ok(block, 'doctor has no check 7');
+  const run = (cfg) => {
+    const dir = mkdtempSync(join(tmpdir(), 'cycler-doctor-'));
+    writeFileSync(join(dir, 'config.yaml'), cfg);
+    return execFileSync('bash', ['-c', block[1]], {
+      encoding: 'utf8',
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: ROOT, CYCLER_CONFIG: join(dir, 'config.yaml') },
+    });
+  };
+  const stale = run('workflows:\n  default: /cycler:task\n');
+  assert.match(stale, /STALE.*\/cycler:task/, 'a route to a workflow that does not exist reported clean');
+  const live = run('workflows:\n  default: /cycler:workflow-feature\n');
+  assert.match(live, /OK.*workflow-feature/, 'a route to a workflow that DOES exist was called stale');
+  assert.ok(!/STALE/.test(live), 'every route is reported stale — the check cannot pass');
+  assert.match(run('repo:\n  base: main\n'), /none configured/, 'an unrouted config is not reported as such');
+});
+
+t('the number of doctor checks is the number both docs claim', () => {
+  // Adding check 7 left "the seven things" standing in two files. A count in prose has nothing
+  // holding it to the thing it counts, so it drifts on the very commit that changes the count.
+  const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+  const doctor = readFileSync(join(ROOT, 'commands/doctor.md'), 'utf8');
+  const n = (doctor.match(/^## \d+\. /gm) || []).length;
+  assert.ok(n >= 5, `only ${n} numbered checks found — the count regex is matching nothing`);
+  assert.ok(doctor.includes(`the ${WORDS[n]} things`),
+    `doctor.md has ${n} checks but does not say "the ${WORDS[n]} things"`);
+  assert.ok(readme.includes(`the ${WORDS[n]} things`),
+    `the README does not say "the ${WORDS[n]} things" — doctor has ${n} checks`);
 });
 
 t('start is the command that sets up AND starts polling', () => {

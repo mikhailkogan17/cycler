@@ -10,7 +10,7 @@
 <h1 align="center">Assign an issue to a local harness. Get a gated pull request back.</h1>
 
 <p align="center">
-  On your machine · your harness · your gate · no cloud, no webhook, no tunnel
+  On your machine · your harness · your gate · no cloud, no tunnel
 </p>
 
 <p align="center">
@@ -24,48 +24,48 @@
 
 ## What is cycler
 
-A Claude Code plugin with three parts:
+A Claude Code plugin with four parts:
 
+- **Linear OAuth app** — the agent 'teammate' for assigning an issue to;
 - **poller** — checks Linear for issues assigned to the agent, every 180 seconds;
-- **dispatch** — starts a background Claude Code session in your repo, remote control on;
+- **dispatch** — starts a background harness session in your repo, remote control on;
 - **workflow** — Contract → Branch → Implement → Audit → Verify → Commit → PR → Review →
   Follow-ups → Cleanup.
 
-You assign the issue and close the tab. The session comments when it starts, when it has open
-questions, and when the PR is up. **It never merges** — every change still passes a human.
+You assign the issue and close the tab.<br>
+The session comments when it starts, when it has open questions, and when the PR is up.
 
 ## Alternatives
 
 Nothing else does all three: assignable as a Linear agent, running locally, with a real workflow
 behind it.
 
-| | |
+| Project | |
 |---|---|
 | [**cyrus**](https://github.com/cyrusagents/cyrus) | Its own harness and its own child agents. High token cost, workflow you don't control. |
 | [**agent-acp-bridge**](https://github.com/larryhudson/agent-acp-bridge) | Transport without the workflow on top — no contract, gate, audit, review. |
 | [**flow-next**](https://github.com/gmickel/flow-next) | *You* start every run. Nothing binds a Linear agent to it, so the board never hands work over. |
-| **Copilot / Codex on Linear** | Cloud execution only. No choice of gate, no choice of workflow, and your repo leaves your machine. |
+| **Copilot / Codex Linear Agent** | Cloud execution only. No choice of gate, no choice of workflow, and your repo leaves your machine. |
 
 ---
 
 ## Install
 
-**Requirements:** macOS · Node 18+ · [Claude Code](https://claude.com/claude-code) · a Linear
-workspace you can create an OAuth application in.
+**Requirements:**
+- macOS
+- Node 18+
+- [Claude Code](https://claude.com/claude-code)
+- a Linear workspace you can create an OAuth application in
 
-In Claude Code — these are slash commands, not shell:
+1. In a terminal:
 
-```
-/plugin marketplace add mikhailkogan17/cycler
-/plugin install cycler@cycler
-/cycler:start
-```
+   ```bash
+   claude plugin marketplace add mikhailkogan17/cycler
+   claude plugin install cycler@cycler
+   claude /cycler:start
+   ```
 
-`/cycler:start` does the rest: the Linear OAuth application, the authorisation, the config, the
-workflow file, a gate check, one verified poll, and the launchd job. Run it again any time — it
-checks what is already done and fills only the gaps.
-
-Then, in Linear, assign an issue to the Claude agent.
+2. In Linear, assign an issue to the Claude agent.
 
 ## Usage
 ### Commands
@@ -73,10 +73,12 @@ Then, in Linear, assign an issue to the Claude agent.
 |---|---|
 | `/cycler:start` | set up whatever is missing, then start polling |
 | `/cycler:stop` | unload the launchd job |
-| `/cycler:delegate <KEY>` | put one issue on the agent and dispatch it now   |
-| `/cycler:doctor` | diagnose the seven things that actually break |
+| `/cycler:delegate <KEY>` | put one issue on the agent and dispatch it now — the board's assign button, from here |
+| `/cycler:doctor` | diagnose the eight things that actually break |
 
-`/cycler:delegate` is the same as the board's assign button.
+> [!TIP]
+> `/cycler:start` checks your setup and adds whatever is missing: the config, the Linear OAuth
+> app, and the launchd job. Safe to re-run.
 
 > [!CAUTION]
 > **Anyone who can assign an issue to the agent can run code on your machine.**
@@ -86,8 +88,8 @@ Then, in Linear, assign an issue to the Claude agent.
 ### Workflows
 | workflow | for |
 |---|---|
-| `/cycler:workflow-feature` | a feature, improvement, tech debt or bug — contract → implement → audit → gate → PR |
-| `/cycler:workflow-bug` | the same lifecycle in fix mode: the regression test comes before the fix |
+| `/cycler:workflow-feature` | a feature, improvement, tech debt — contract → implement → audit → gate → PR |
+| `/cycler:workflow-bug` | the same lifecycle in bugfix mode: the regression test comes before the fix |
 | `/cycler:workflow-research` | a question whose deliverable is a decision, not a diff. No contract, no gate |
 | `/cycler:workflow-intake` | writing a contract by hand first, then handing it to `workflow-feature`. Optional |
 
@@ -99,7 +101,8 @@ Then, in Linear, assign an issue to the Claude agent.
 
 ## Config
 
-One file, outside your repo: `~/.config/cycler/config.yaml`.
+Path: `~/.config/cycler/config.yaml`.
+Every key is optional.
 
 ```yaml
 linear:
@@ -124,15 +127,7 @@ dispatch:
   path_prepend: [~/.local/bin, ~/bin, /opt/homebrew/bin, /usr/local/bin]
 ```
 
-Every key is optional and every default works. `workflows` is a label → workflow map: add a Linear
-label as a key and issues carrying it route there.
-
 [**Example**](cycler.example.yaml)  |  [**Full reference**](docs/specs/002-config.md)
-
-**The gate is yours.** cycler runs `.claude/harness/gate.sh` from your repo when it exists, and
-otherwise falls back to `lint`, `build` and `test` from `package.json`. Copy
-[`harness/gate.default.sh`](harness/gate.default.sh) and replace the checks; what you inherit is the
-runner. A repo with no gate and no lint/build/test script reports **FAIL**, not a pass.
 
 ---
 
@@ -165,9 +160,9 @@ flowchart TD
     style S fill:none,stroke:#9aa0a6,stroke-dasharray:4 4,color:#6e7781
 ```
 
-Nothing listens on your machine. The poller makes one outbound request every 180 seconds and never
-calls a model — every token is spent by the session you configured, with your model, your
-permissions, your harness.
+> [!NOTE]
+> The poller only makes one outbound request every 180 seconds
+> It **never do any LLM call** — every token is only spent by harness itself **after it dispatches a session**
 
 <details>
 <summary>Design notes</summary>
@@ -222,4 +217,4 @@ Spec → failing test → code → gate, in that order. [`CONTRIBUTING.md`](CONT
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+[`MIT`](LICENSE).

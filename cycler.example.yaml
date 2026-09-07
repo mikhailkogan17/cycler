@@ -61,6 +61,14 @@ dispatch:
   # session never sees this, which is why it only shows up once dispatch is automated.
   path_prepend: [~/.local/bin, ~/bin, /opt/homebrew/bin, /usr/local/bin]
 
+# The gate is not a key here — it is a file in your repo:
+#
+#   .claude/harness/gate.sh
+#
+# That file wins whenever it exists. Without it, cycler runs lint, build and test from package.json.
+# A repo with neither reports FAIL, not a pass. Start from the plugin's harness/gate.default.sh and
+# replace the checks; the runner is what you inherit. Full behaviour: docs/specs/003-gate.md.
+
 # Also available, and left out here because almost nobody overrides them:
 #   dispatch.start_grace_seconds / dispatch.max_attempts   how long a session gets to post its start
 #                         marker before it is declared dead, and how many times it is re-dispatched
