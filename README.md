@@ -161,8 +161,8 @@ flowchart TD
 ```
 
 > [!NOTE]
-> The poller only makes one outbound request every 180 seconds
-> It **never do any LLM call** — every token is only spent by harness itself **after it dispatches a session**
+> The poller only makes one outbound request every 180 seconds, and **never an LLM call**.
+> Every token is spent by the harness itself, **after it dispatches a session**.
 
 <details>
 <summary>Design notes</summary>
