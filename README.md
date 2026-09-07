@@ -107,13 +107,13 @@ Then, in Linear, assign an issue to the Claude agent.
 
 ## Usage
 
-Four commands, all verbs, all run by you:
+Four commands, all run by you:
 
 | command | does |
 |---|---|
 | `/cycler:start` | set up whatever is missing, then start polling |
 | `/cycler:stop` | unload the launchd job |
-| `/cycler:delegate <KEY>` | put one issue on the agent and dispatch it now, without waiting for the poll |
+| `/cycler:delegate <KEY>` | put one issue on the agent and dispatch it now   |
 | `/cycler:doctor` | diagnose the seven things that actually break |
 
 `/cycler:delegate` is the board's assign button, from the terminal you are already in. The work still
