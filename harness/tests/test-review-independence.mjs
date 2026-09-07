@@ -82,7 +82,7 @@ await t('the proximity check can actually fail', () => {
 await t('the task skill states that a run without review lenses is incomplete', () => {
   // The skill is what a dispatched session actually follows. If skipping review is silently
   // acceptable there, the carve-out elsewhere changes nothing.
-  const src = read('skills/task/SKILL.md');
+  const src = read('skills/workflow-feature/SKILL.md');
   assert.ok(/independent|review lens|lenses/i.test(src), 'the skill never mentions independent review');
   assert.ok(/self-performed|not independent|incomplete|say so/i.test(src),
     'the skill does not require a run to declare when review was NOT independent');

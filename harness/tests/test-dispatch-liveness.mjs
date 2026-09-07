@@ -63,7 +63,7 @@ function poll({ script = {}, processed = null, pending = null, extraCfg = '' } =
 }
 
 const stale = (over = {}) => [{
-  issueId: 'uuid-1', identifier: 'ABC-1', workflow: '/cycler:task',
+  issueId: 'uuid-1', identifier: 'ABC-1', workflow: '/cycler:workflow-feature',
   session: 'sess-1', at: Date.now() - 10 * 60 * 1000, attempts: 1, ...over,
 }];
 const deadBody = (p) => p.comments.map((c) => c.variables.body).find((b) => /never started/i.test(b));
@@ -177,7 +177,13 @@ t('a fresh dispatch records itself as pending, so it can be judged later', () =>
 
 // ─── the coupling that would otherwise rot ────────────────────────────────────
 t('every routable skill posts the marker the poller looks for', () => {
-  for (const s of ['task', 'research']) {
+  // "Routable" is not a list to keep in step by hand — it is whatever the shipped config dispatches.
+  // Reading it from there means adding a route to the example is what puts it under this assertion,
+  // and a hardcoded list is how this test came to name a skill that had been renamed away.
+  const yaml = readFileSync(join(ROOT, 'cycler.example.yaml'), 'utf8');
+  const routable = [...new Set([...yaml.matchAll(/^\s*\w+:\s*\/cycler:([\w-]+)/gm)].map((m) => m[1]))];
+  assert.ok(routable.length >= 2, 'no routes found in cycler.example.yaml — this test would assert nothing');
+  for (const s of routable) {
     const src = readFileSync(join(ROOT, 'skills', s, 'SKILL.md'), 'utf8');
     assert.match(src, /harness:<KEY>:/,
       `skills/${s}/SKILL.md posts no start marker — every ${s} dispatch will be declared dead and retried`);

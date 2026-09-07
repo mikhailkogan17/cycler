@@ -9,7 +9,7 @@
 # turn re-reads every earlier result. A fresh implementer's context stays small and dies with it.
 # Measured on APL-41, cache reads were 61% of cost. Splitting the work splits the context.
 #
-# Scope: ONLY inside /task worktrees, like require-contract.sh — a hook that fires on local edits gets
+# Scope: ONLY inside /workflow-feature worktrees, like require-contract.sh — a hook that fires on local edits gets
 # switched off within a day.
 #
 # stdin: PreToolUse JSON. exit 0 = allow, exit 2 = deny (stderr goes back to the model).
@@ -27,7 +27,7 @@ FILE="$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.file_path // .tool_input.pat
 [ -n "$CWD" ] || CWD="$PWD"
 
 case "$CWD" in
-  # /task worktrees. This USED to be ~/.cyrus/worktrees/* — when that orchestrator went away the
+  # /workflow-feature worktrees. This USED to be ~/.cyrus/worktrees/* — when that orchestrator went away the
   # pattern matched nothing and every one of these hooks silently stopped firing. A guard that cannot
   # fire is worse than no guard, because the process still claims it is enforced.
   */.claude/worktrees/*) ;;

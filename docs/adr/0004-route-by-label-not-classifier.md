@@ -18,8 +18,8 @@ Route by **label**, first match wins, from the cycler config:
 
 ```yaml
 workflows:
-  default: /cycler:task
-  research: /cycler:research
+  default: /cycler:workflow-feature
+  research: /cycler:workflow-research
 ```
 
 Every key except `default` **is** a Linear label. No model is involved in routing.

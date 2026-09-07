@@ -17,14 +17,14 @@ code. This file covers only *how work is run here*.
 ## Which harness runs this issue
 
 `${CLAUDE_PLUGIN_ROOT}/harness/ROUTING.md` — one table, first clear match wins. Short version: a
-`Research` label means `/research` (a decision, not a diff); a one-liner means just do it. Everything
-else is `/task`.
+`Research` label means `/workflow-research` (a decision, not a diff); a one-liner means just do it. Everything
+else is `/workflow-feature`.
 
 Whatever the route, the gate gates the commit — that is a hook, not a choice.
 
 ## Working a Linear issue
 
-**If this session was started from a Linear issue** — dispatched by cycler's poller, a `/task` run, or
+**If this session was started from a Linear issue** — dispatched by cycler's poller, a `/workflow-feature` run, or
 a human saying "do ABC-N" — follow the contract-first harness. It is not a style preference: it is
 what keeps an unattended run from reporting green on a red gate.
 

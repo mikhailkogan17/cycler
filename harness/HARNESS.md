@@ -17,7 +17,7 @@ silently overrides `args.executorModel`.
 
 ## The flow (all inside `task-orchestration`)
 
-`/task` → one workflow run:
+`/workflow-feature` → one workflow run:
 
 ```
 contract → implement → audit → verify → commit → PR → review
@@ -61,10 +61,10 @@ contract/scope-creep lenses cover compliance.
   violation. The auditor verifies the contract file is unchanged. Gate tooling and tests are in the
   CONTRACT.md default Forbidden paths.
 - **One workflow, always.** No ad-hoc parallel subagents *of your own*, no per-stage workflows;
-  `/task` calls `task-orchestration` once. This constrains what the DRIVER spawns. The workflow's own
+  `/workflow-feature` calls `task-orchestration` once. This constrains what the DRIVER spawns. The workflow's own
   auditor, review lenses and refuters are subagents and are never what this forbids — read as a ban on
   those, it removes the only independent reader in the run. This constrains the shape of a single run; it does not forbid running
-  several independent `/task` runs at the same time — see **Concurrency** below for the terms.
+  several independent `/workflow-feature` runs at the same time — see **Concurrency** below for the terms.
 - **One tree, one run.** (APL-45) A working tree may host exactly one run. Enforced, not trusted: a
   shared-tree run takes an exclusive lock and a second one is refused with the holder named; a
   `worktree: true` run gets its own directory, and git itself refuses to check the same branch out twice.
@@ -187,7 +187,7 @@ describes. The GC still exists for `EnterWorktree` sessions and for worktrees ke
 
 ## Concurrency (APL-45)
 
-Several `/task` runs may execute at once, on these terms.
+Several `/workflow-feature` runs may execute at once, on these terms.
 
 **Isolation is opt-in, safety is not.** Pass `worktree: true` and the run works in
 `.claude/worktrees/<branch-slug>` with every stage pointed there. Omit it and the run works in the shared
@@ -330,7 +330,7 @@ past the first hook — they do not become a commit without a green gate. `gate.
 the hook recomputes and compares, so editing after a green run and then committing is refused. Otherwise
 an unverified change reaches a PR looking verified.
 
-**Scope: `/task` worktrees only** (`.claude/worktrees/...`). Interactive work in the main checkout is
+**Scope: `/workflow-feature` worktrees only** (`.claude/worktrees/...`). Interactive work in the main checkout is
 untouched — an edit hook firing on every local keystroke would be switched off within a day, and a
 disabled hook enforces nothing.
 
@@ -364,7 +364,7 @@ four still run.
 
 ## Tracker-driven tasks (APL-35)
 
-`/task` accepts a Linear issue URL or a bare key (`APL-12`, `apl-12`) in place of a description. The key is
+`/workflow-feature` accepts a Linear issue URL or a bare key (`APL-12`, `apl-12`) in place of a description. The key is
 resolved from `args.issueId`, then a Linear URL, then a key in the request text, then a whole-request bare
 key — and it drives four things: the branch (`claude/APL-12`), the contract filename
 (`apl-12-<slug>.md`), the commit subject, and `Closes APL-12.` in the PR body.
@@ -372,7 +372,7 @@ key — and it drives four things: the branch (`claude/APL-12`), the contract fi
 When the request is **only** a reference, there is no description to contract from, so the CONTRACT AUTHOR
 resolves the issue itself through the Linear MCP (`get_issue`) and contracts from its title + description —
 Goal / Evidence / Acceptance map onto the contract template directly, which is why issues are worth writing
-that way. The `/task` skill resolves it up front when it has the Linear tools; the in-workflow path is the
+that way. The `/workflow-feature` skill resolves it up front when it has the Linear tools; the in-workflow path is the
 fallback. An issue too thin to contract from produces `openQuestions`, which stops the run and comments
 back on the issue (see the round-trip section).
 
@@ -462,7 +462,7 @@ test a trap. None were in the issue; our own contract for the same issue found n
 idea now lives in `CONTRACT.md`.
 
 **It lost on everything else that binds here.** Measured: 596k tokens for APL-16 against 123-163k for
-a comparable `/task` run. It cannot dispatch — its tracker bridge is projection-only, spec → tracker,
+a comparable `/workflow-feature` run. It cannot dispatch — its tracker bridge is projection-only, spec → tracker,
 so nothing in it reads a Linear delegation. It has no Linear round-trip. Its headline claim, that the
 model writing the diff never reviews it, needs a second vendor's CLI that is not installed here, so
 `review.backend: host` was same-vendor anyway. And its gate is a model reading a diff, which can be

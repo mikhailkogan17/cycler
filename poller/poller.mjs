@@ -59,11 +59,11 @@ const prepend = cfg('dispatch.path_prepend');
 const PATH_PREPEND = (Array.isArray(prepend) && prepend.length
   ? prepend
   : ['~/.local/bin', '~/bin', '/opt/homebrew/bin', '/usr/local/bin']).map(expand);
-// /task runs the contract -> implement -> audit -> gate -> PR workflow. Measured against running the
+// /workflow-feature runs the contract -> implement -> audit -> gate -> PR workflow. Measured against running the
 // harness inline in one long-lived session on the same issue and contract: 1.68M subagent tokens and a
 // merged PR, versus 10.77M and nothing shipped. There is no /start command in this repo — dispatching
 // it sent the session a literal string with no skill behind it.
-const WORKFLOW = process.env.CYCLER_WORKFLOW || cfg('workflows.default') || '/cycler:task';
+const WORKFLOW = process.env.CYCLER_WORKFLOW || cfg('workflows.default') || '/cycler:workflow-feature';
 const MAX_PER_POLL = 50;
 // How long a dispatched session gets to post its start marker before it is declared dead, and how
 // many times an issue is re-dispatched before the poller stops trying. Both are config keys because
@@ -74,17 +74,17 @@ const MAX_PER_POLL = 50;
 const START_GRACE_MS = Number(cfg('dispatch.start_grace_seconds') ?? 300) * 1000;
 const MAX_DISPATCH_ATTEMPTS = Number(cfg('dispatch.max_attempts') ?? 3);
 
-// Route by label, per harness/ROUTING.md. Until this existed the poller dispatched /task for
+// Route by label, per harness/ROUTING.md. Until this existed the poller dispatched /workflow-feature for
 // EVERYTHING, so that table was advice the only automated path ignored — a Research issue got a
 // contract-and-gate run for work that produces no diff, and a Harness issue got an implementer that
 // is forbidden `.claude/**` and therefore cannot pass its own audit.
 //
 // `workflows:` is a map from Linear LABEL to workflow, plus the reserved key `default`. It used to be
 // `routes.byLabel`, a list of {label, workflow, why} — three keys and a nesting level to say what
-// `research: /cycler:research` says on one line.
+// `research: /cycler:workflow-research` says on one line.
 //
 // Deliberately a lookup on a label a human already wrote, not a classifier. A model here would infer,
-// less reliably, something already recorded — and a router that picks /task for everything is
+// less reliably, something already recorded — and a router that picks /workflow-feature for everything is
 // indistinguishable from a working one until something audits its choices.
 //
 // CYCLER_WORKFLOW still overrides everything, for a one-off or a bisect.
@@ -94,7 +94,7 @@ const configured = Object.entries(wfMap && typeof wfMap === 'object' && !Array.i
   .map(([label, workflow]) => [label.toLowerCase(), workflow]);
 // Order is the file's own order — the parser preserves it — so the first matching label wins and a
 // user can express precedence by moving a line.
-const ROUTES = configured.length ? configured : [['research', '/cycler:research']];
+const ROUTES = configured.length ? configured : [['research', '/cycler:workflow-research']];
 function workflowFor(issue) {
   if (process.env.CYCLER_WORKFLOW) return { workflow: WORKFLOW, why: 'CYCLER_WORKFLOW override' };
   const labels = (issue.labels?.nodes || []).map((l) => String(l.name || '').toLowerCase());
@@ -370,7 +370,7 @@ async function dispatch(issue) {
 // a failed START.
 //
 // The proof of life is the start marker `<!-- harness:<KEY>:... -->` that every routable skill posts
-// as its first act (skills/task step 3, skills/research step 1b). It is checked here, on a LATER
+// as its first act (skills/workflow-feature step 3, skills/workflow-research step 1b). It is checked here, on a LATER
 // poll, because the check has to outlive the poll that dispatched: asking immediately would only ever
 // see a session that has not got there yet.
 async function checkLiveness() {

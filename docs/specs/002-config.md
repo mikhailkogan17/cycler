@@ -3,7 +3,7 @@
 One file: **`~/.config/cycler/config.yaml`**.
 
 Read by `lib/yaml.mjs`; exposed to bash hooks by `harness/read-config.mjs`; passed whole to the
-workflow by the `/cycler:task` skill (`read-config.mjs --json`).
+workflow by the `/cycler:workflow-feature` skill (`read-config.mjs --json`).
 
 There used to be two — a committed `cycler.yaml` at the repo root plus `~/.cycler/config.json` for
 the OAuth credentials. Splitting a config by secrecy split it by nothing else: `repo.base` and
@@ -98,8 +98,14 @@ degrades to a comment on the issue rather than a silent stall. `REPO_PATH` overr
 
 | key | default | meaning |
 |---|---|---|
-| `workflows.default` | `/cycler:task` | the workflow for an issue with no matching label |
-| `workflows.<label>` | `research: /cycler:research` | a Linear label, mapped to the workflow it dispatches |
+| `workflows.default` | `/cycler:workflow-feature` | the workflow for an issue with no matching label |
+| `workflows.<label>` | `research: /cycler:workflow-research` | a Linear label, mapped to the workflow it dispatches |
+
+The value is a slash command, and it must be one of the **workflow** skills — the `workflow-`
+prefixed half of the `/cycler:` namespace. The other half (`start`, `stop`, `delegate`, `doctor`) are
+commands the user runs; routing an issue to one of those dispatches a session that sets up the
+poller instead of doing the work. The prefix is what makes the two halves tellable apart in a list
+that shows them together, and 3.17/3.19 are what keep it true.
 
 `default` is the only reserved key; every other key **is** a Linear label, matched
 case-insensitively, first match in file order winning. Setting any label key replaces the built-in
@@ -107,7 +113,7 @@ case-insensitively, first match in file order winning. Setting any label key rep
 no research route, which is the point of writing it out.
 
 This replaced `routes.default` plus a `routes.byLabel` list of `{label, workflow, why}` — three keys
-and a nesting level to say what `research: /cycler:research` says on one line. The `why` field went
+and a nesting level to say what `research: /cycler:workflow-research` says on one line. The `why` field went
 with it; the dispatch comment now reports the reason as the label that matched, which is the same
 information and cannot go stale against the route beside it.
 
@@ -201,7 +207,11 @@ filename from this one value so they cannot drift.
 | 3.13 | `launchd.label` names both the job and its plist | — untested (commands are prose) |
 | 3.14 | `dispatch.max_attempts` bounds the retries, and the default still retries | `test-dispatch-liveness.mjs` |
 | 3.15 | `dispatch.start_grace_seconds` widens the window; the same record then goes unjudged | `test-dispatch-liveness.mjs` |
-| 3.16 | The command set is exactly `start` / `stop` / `issue` / `doctor`, both directions | `test-command-names.mjs` |
+| 3.16 | The command set is exactly `start` / `stop` / `delegate` / `doctor`, both directions | `test-command-names.mjs` |
+| 3.17 | Every skill is named `workflow-*`, no command is, and the two are documented apart | `test-command-names.mjs` |
+| 3.18 | A skill's directory name equals the `name:` it is invoked by | `test-command-names.mjs` |
+| 3.19 | Every route in the shipped example names a workflow that exists | `test-command-names.mjs` |
+| 3.20 | Every command and workflow name is one Claude Code will load | `test-command-names.mjs` |
 
 Every conditional key is asserted in **both** directions. A test that only checks the configured case
 passes against a hardcoded implementation; one that only checks the unconfigured case passes against

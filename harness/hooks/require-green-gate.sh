@@ -5,7 +5,7 @@
 # slipped past the edit hook — they do not become a commit unless gate.sh passed on the current
 # working tree. gate.sh writes the marker; this compares it against the tree as it stands now.
 #
-# Scope: ONLY inside /task worktrees. exit 0 = allow, exit 2 = deny.
+# Scope: ONLY inside /workflow-feature worktrees. exit 0 = allow, exit 2 = deny.
 
 set -uo pipefail
 
@@ -20,7 +20,7 @@ CMD="$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.command // empty' 2>/dev/null
 [ -n "$CWD" ] || CWD="$PWD"
 
 case "$CWD" in
-  # /task worktrees. This USED to be ~/.cyrus/worktrees/* — when that orchestrator went away the
+  # /workflow-feature worktrees. This USED to be ~/.cyrus/worktrees/* — when that orchestrator went away the
   # pattern matched nothing and every one of these hooks silently stopped firing. A guard that cannot
   # fire is worse than no guard, because the process still claims it is enforced.
   */.claude/worktrees/*) ;;

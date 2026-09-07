@@ -1,9 +1,9 @@
 ---
-name: task
-description: Run a task end-to-end in ONE workflow (task-orchestration): contract → implement → audit → verify → commit → PR → review (fixes pushed to the PR). Auto-commits, opens a PR, never merges — unless you pass noCommit.
+name: workflow-feature
+description: The workflow a dispatched session runs for a feature, improvement or bug: contract → implement → audit → verify → commit → PR → review (fixes pushed to the PR). Auto-commits, opens a PR, never merges — unless you pass noCommit.
 ---
 
-# /task — full task lifecycle in a single workflow
+# /workflow-feature — full task lifecycle in a single workflow
 
 ## Inputs
 
@@ -97,7 +97,7 @@ Workflow({ scriptPath: '.claude/workflows/task-orchestration.js', args: {
 ```
 
    - If a contract already exists and the user wants to use it, pass `contractPath` instead of `task`.
-   - When the user invokes `/task <ISSUE-KEY>` (e.g. `/task APL-10`), pass that key as `issueId`. The
+   - When the user invokes `/workflow-feature <ISSUE-KEY>` (e.g. `/workflow-feature APL-10`), pass that key as `issueId`. The
      workflow also parses an uppercase `ABC-123` key out of the task text, so this is belt-and-braces —
      but pass it explicitly whenever you know it. It determines the branch name (`<branchPrefix><ISSUE_ID>`).
 6. **Perform the Linear writes the workflow planned.** The result carries `linearWrites[]` — the
@@ -144,7 +144,7 @@ implementing. Present the contract as the plan:
 3. Call `ExitPlanMode` — the user reviews the contract as the plan.
 4. Approved → re-invoke the SAME workflow with `contractPath: <path>` and WITHOUT `stopAtContract`; the
    implement → audit → verify → review → commit stages run normally.
-5. Rejected → do not re-invoke. The user edits the contract file (or re-runs `/task`); they may then pass
+5. Rejected → do not re-invoke. The user edits the contract file (or re-runs `/workflow-feature`); they may then pass
    `contractPath` to continue.
 
 If you set `stopAtContract` but `ExitPlanMode` is unavailable (not actually in plan mode), present the
@@ -186,7 +186,7 @@ contract in a normal message and ask for approval before re-invoking.
 - **Parallel runs need `worktree: true`** (APL-45). Without it a run works in the shared checkout and
   takes an exclusive lock; a second concurrent run is refused outright, naming the branch that holds the
   lock — loud, not interleaved. With it, the run gets its own worktree under `.claude/worktrees/` and
-  every stage is pointed there, so several `/task` runs on different branches are safe at once. Two runs
+  every stage is pointed there, so several `/workflow-feature` runs on different branches are safe at once. Two runs
   on the SAME branch are still impossible: git refuses to check one branch out in two worktrees, and the
   harness will not `--force` past that. A clean run removes its worktree; a **blocked run keeps it** and
   reports the path in `result.worktree` — inspect it, then

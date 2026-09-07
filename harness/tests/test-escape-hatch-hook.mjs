@@ -12,7 +12,7 @@ let failed = 0;
 const check = (n, fn) => { try { fn(); console.log(`PASS ${n}`); } catch (e) { failed++; console.log(`FAIL ${n}\n  ${e.message.split("\n")[0]}`); } };
 const assert = (c, m) => { if (!c) throw new Error(m); };
 
-// The hook only fires inside a /task worktree, so the fixture must live under one.
+// The hook only fires inside a /workflow-feature worktree, so the fixture must live under one.
 // Fixtures must live where the hook fires: a .claude/worktrees path. This used to be
 // ~/.cyrus/worktrees; when that moved, the hooks stopped firing and these tests were the
 // only thing that noticed.
@@ -110,11 +110,11 @@ check("markdown and .claude files are never blocked", () => {
   rmSync(d, { recursive: true, force: true });
 });
 
-check("outside a /task worktree the hook does not fire", () => {
+check("outside a /workflow-feature worktree the hook does not fire", () => {
   const d = mkdtempSync(join(tmpdir(), "local-"));
   mkdirSync(join(d, ".claude/harness/contracts"), { recursive: true });
   writeFileSync(join(d, ".claude/harness/contracts/c.md"), list(13));
-  assert(run(d, join(d, "src/f0.ts")).allowed, "fired outside a /task worktree");
+  assert(run(d, join(d, "src/f0.ts")).allowed, "fired outside a /workflow-feature worktree");
   rmSync(d, { recursive: true, force: true });
 });
 

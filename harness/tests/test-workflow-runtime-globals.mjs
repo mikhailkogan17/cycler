@@ -7,7 +7,7 @@
 //   const PLUGIN_ROOT = args?.pluginRoot || process.env.CLAUDE_PLUGIN_ROOT || '.'
 //
 // so any invocation that did not pass BOTH args died with `process is not defined` on the script's
-// first executable line, before a single stage dispatched. The /cycler:task skill passed neither.
+// first executable line, before a single stage dispatched. The /cycler:workflow-feature skill passed neither.
 // Four consecutive unattended dispatches of APL-60 left no branch and no PR, and the poller — which
 // marks an issue processed the moment the session spawns — reported all four as fine.
 //
@@ -29,7 +29,7 @@ let fails = 0;
 const t = async (n, fn) => { try { await fn(); console.log('PASS', n) } catch (e) { fails++; console.log('FAIL', n, '\n  ', e.message) } };
 
 const wf = readFileSync(join(ROOT, 'workflows/task-orchestration.js'), 'utf8');
-const skill = readFileSync(join(ROOT, 'skills/task/SKILL.md'), 'utf8');
+const skill = readFileSync(join(ROOT, 'skills/workflow-feature/SKILL.md'), 'utf8');
 
 // Strip comments before looking for `process` — the file explains this trap in prose, and a naive
 // grep would match its own explanation and pass forever.
@@ -58,11 +58,11 @@ await t('a run with no pluginRoot fails loudly, naming the missing arg', async (
 
 // The check that could have gone red on the real bug: the skill is the only caller in a dispatched
 // run, and it passed neither arg.
-await t('the /task skill passes every arg the workflow requires', () => {
+await t('the /workflow-feature skill passes every arg the workflow requires', () => {
   const block = skill.slice(skill.indexOf('Workflow({'), skill.indexOf('}})'));
-  assert.ok(block.length > 50, 'could not find the Workflow({...}) invocation in skills/task/SKILL.md');
+  assert.ok(block.length > 50, 'could not find the Workflow({...}) invocation in skills/workflow-feature/SKILL.md');
   for (const k of ['cwd:', 'pluginRoot:', 'config:']) {
-    assert.ok(block.includes(k), `skills/task/SKILL.md does not pass \`${k.slice(0, -1)}\``);
+    assert.ok(block.includes(k), `skills/workflow-feature/SKILL.md does not pass \`${k.slice(0, -1)}\``);
   }
 });
 

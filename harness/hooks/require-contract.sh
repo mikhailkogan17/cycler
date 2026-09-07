@@ -5,7 +5,7 @@
 # request the model can reason its way out of — the first real dispatched run did exactly that, ignoring
 # the harness and hand-exploring instead. A denied tool call is not persuadable.
 #
-# Scope: ONLY inside a /task worktree (.claude/worktrees/...). Interactive work in the main checkout
+# Scope: ONLY inside a /workflow-feature worktree (.claude/worktrees/...). Interactive work in the main checkout
 # is untouched — an editing hook that fires on every local edit would be turned off within a day.
 #
 # stdin: the PreToolUse JSON payload. exit 0 = allow, exit 2 = deny (stderr goes back to the model).
@@ -22,9 +22,9 @@ CWD="$(printf '%s' "$PAYLOAD" | jq -r '.cwd // empty' 2>/dev/null)"
 FILE="$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.file_path // .tool_input.path // empty' 2>/dev/null)"
 [ -n "$CWD" ] || CWD="$PWD"
 
-# Only enforce inside a /task worktree.
+# Only enforce inside a /workflow-feature worktree.
 case "$CWD" in
-  # /task worktrees. This USED to be ~/.cyrus/worktrees/* — when that orchestrator went away the
+  # /workflow-feature worktrees. This USED to be ~/.cyrus/worktrees/* — when that orchestrator went away the
   # pattern matched nothing and every one of these hooks silently stopped firing. A guard that cannot
   # fire is worse than no guard, because the process still claims it is enforced.
   */.claude/worktrees/*) ;;
@@ -46,7 +46,7 @@ case "$FILE" in
 esac
 
 # Pull the issue key out of the worktree name. The previous orchestrator named worktrees exactly
-# `APL-44`; /task names them `claude-APL-15`. Matching the whole basename would look for a contract
+# `APL-44`; /workflow-feature names them `claude-APL-15`. Matching the whole basename would look for a contract
 # called *claude-APL-15*.md and never find `apl-15-<slug>.md`, so every edit would be blocked with a
 # message naming a key that does not exist. Extract the key itself and fall back to the basename.
 WT_NAME="$(basename "$CWD")"

@@ -76,8 +76,8 @@ check("a symlink pointing out of the worktree is blocked", () => {
   assert(!run(wt, join(link, "b.ts")).allowed, "followed a symlink out of the worktree");
 });
 
-check("outside a /task worktree the hook does not fire", () => {
-  assert(run(outside, join(outside, "b.ts")).allowed, "fired outside a /task worktree");
+check("outside a /workflow-feature worktree the hook does not fire", () => {
+  assert(run(outside, join(outside, "b.ts")).allowed, "fired outside a /workflow-feature worktree");
 });
 
 rmSync(wt, { recursive: true, force: true });

@@ -17,7 +17,7 @@ that, and it was the wrong call.
 
 Status transitions belong to the workflow. `task-orchestration.js` plans them —
 `linearSync('started' | 'open-questions' | 'pr-opened' | 'approved' | 'blocked-<stage>')` — and the
-`/cycler:task` skill performs them with `lin issue update --state`, made idempotent by an HTML marker
+`/cycler:workflow-feature` skill performs them with `lin issue update --state`, made idempotent by an HTML marker
 comment.
 
 The poller writes exactly two things: a dispatch comment, and a failure comment.

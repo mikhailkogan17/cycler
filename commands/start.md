@@ -199,5 +199,5 @@ because the job loaded. A loaded job that fails every poll looks identical to a 
 Tell the user how to use it: assign an issue to Claude in Linear, and the poller picks it up
 within 180 seconds.
 
-`/cycler:issue <KEY>` dispatches one now. `/cycler:stop` unloads the job.
+`/cycler:delegate <KEY>` dispatches one now. `/cycler:stop` unloads the job.
 `/cycler:doctor` diagnoses it.
