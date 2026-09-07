@@ -130,9 +130,9 @@ t('2.4 (other direction) a SUCCESSFUL dispatch IS marked processed', () => {
 
 // ─── §3 Routing ───────────────────────────────────────────────────────────────
 t('3.4 CYCLER_WORKFLOW overrides all routing, including a matching label', () => {
-  const cfg = (repo) => dispatchCfg(repo, 'workflows:\n  default: /cycler:task\n  research: /cycler:research\n');
+  const cfg = (repo) => dispatchCfg(repo, 'workflows:\n  default: /cycler:workflow-feature\n  research: /cycler:workflow-research\n');
   const routed = poll({ script: { issues: [issue({ labels: ['research'] })] }, cfg });
-  assert.match(routed.spawns[0].argv.join(' '), /\/cycler:research/, 'the label route did not apply');
+  assert.match(routed.spawns[0].argv.join(' '), /\/cycler:workflow-research/, 'the label route did not apply');
   const forced = poll({ script: { issues: [issue({ labels: ['research'] })] }, cfg, env: { CYCLER_WORKFLOW: '/forced' } });
   assert.match(forced.spawns[0].argv.join(' '), /\/forced/, 'CYCLER_WORKFLOW did not override the label route');
 });
@@ -141,10 +141,10 @@ t('3.5 the chosen route AND the reason appear in the dispatch comment', () => {
   // Both halves matter. Without the reason, a run routed to the wrong workflow looks identical to
   // one routed correctly — you can see WHAT ran but not WHY, so you cannot tell a label typo from a
   // deliberate default.
-  const cfg = (repo) => dispatchCfg(repo, 'workflows:\n  research: /cycler:research\n');
+  const cfg = (repo) => dispatchCfg(repo, 'workflows:\n  research: /cycler:workflow-research\n');
   const p = poll({ script: { issues: [issue({ labels: ['research'] })] }, cfg });
   const body = p.comments[0].variables.body;
-  assert.match(body, /\/cycler:research/, 'the comment does not name the route');
+  assert.match(body, /\/cycler:workflow-research/, 'the comment does not name the route');
   assert.match(body, /label "research"/, 'the comment does not give the REASON for the route');
 
   const dflt = poll({ script: { issues: [issue({ labels: ['chore'] })] }, cfg });
@@ -178,7 +178,7 @@ t('5.1 every dispatch posts a comment with the session id, route and reason', ()
   const p = poll({ script: { issues: [issue()] }, cfg: dispatchCfg });
   assert.strictEqual(p.comments.length, 1, 'no dispatch comment was posted');
   const b = p.comments[0].variables.body;
-  assert.match(b, /sess-abc123/); assert.match(b, /Route:/); assert.match(b, /cycler:task/);
+  assert.match(b, /sess-abc123/); assert.match(b, /Route:/); assert.match(b, /cycler:workflow-feature/);
 });
 
 t('5.2 a FAILED dispatch posts a comment too', () => {

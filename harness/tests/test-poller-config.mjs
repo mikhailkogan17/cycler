@@ -75,16 +75,16 @@ await t('the shipped example config drives every config-derived value', async ()
   process.env.CYCLER_CONFIG = join(here, '..', '..', 'cycler.example.yaml');
   const mod = await import(POLLER + '?example=1');
 
-  const argv = mod.buildDispatchArgv({ identifier: 'ABC-1', title: 't' }, '/cycler:task', '[ABC-1] t');
+  const argv = mod.buildDispatchArgv({ identifier: 'ABC-1', title: 't' }, '/cycler:workflow-feature', '[ABC-1] t');
   assert.ok(argv.length > 5, `dispatch argv collapsed: ${JSON.stringify(argv)}`);
   assert.ok(!argv.includes('--print'), '--print conflicts with --background');
   assert.ok(argv.includes('--background'), 'lost --background');
-  assert.ok(argv.some((a) => a.includes('/cycler:task ABC-1')), 'the prompt never made it into argv');
+  assert.ok(argv.some((a) => a.includes('/cycler:workflow-feature ABC-1')), 'the prompt never made it into argv');
 
-  assert.strictEqual(mod.workflowFor({ identifier: 'ABC-2', labels: { nodes: [] } }).workflow, '/cycler:task');
+  assert.strictEqual(mod.workflowFor({ identifier: 'ABC-2', labels: { nodes: [] } }).workflow, '/cycler:workflow-feature');
   assert.strictEqual(
     mod.workflowFor({ identifier: 'ABC-3', labels: { nodes: [{ name: 'Research' }] } }).workflow,
-    '/cycler:research');
+    '/cycler:workflow-research');
 });
 
 process.exit(fails ? 1 : 0);

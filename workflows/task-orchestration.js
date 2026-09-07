@@ -78,7 +78,7 @@ export const meta = {
 // repo-reading stage must interpolate `runCwd`, never `repoRoot`, or it reads a tree that is not the
 // one being changed. It is reassigned exactly once, by the Branch stage; the stage prompts are template
 // literals inside functions, so they pick up the final value at call time.
-// cycler: no hardcoded checkout. args.cwd is what the /task skill passes from the config
+// cycler: no hardcoded checkout. args.cwd is what the /workflow-feature skill passes from the config
 // (repo.path). There is deliberately no fallback: the Workflow runtime exposes args/agent/parallel/
 // pipeline/log/phase/budget and NOTHING else — no `process`, so the `process.cwd()` fallback that
 // used to sit here was a ReferenceError on the first line of every unattended run, before a single
@@ -87,7 +87,7 @@ export const meta = {
 if (!args?.cwd) {
   throw new Error(
     'task-orchestration: args.cwd is required (the repo checkout to work in). ' +
-      'The /cycler:task skill reads it from the cycler config (repo.path); pass it explicitly for a direct call.'
+      'The /cycler:workflow-feature skill reads it from the cycler config (repo.path); pass it explicitly for a direct call.'
   )
 }
 const repoRoot = args.cwd
@@ -98,11 +98,11 @@ const repoRoot = args.cwd
 if (!args?.pluginRoot) {
   throw new Error(
     'task-orchestration: args.pluginRoot is required (where the cycler plugin is installed). ' +
-      'The /cycler:task skill passes ${CLAUDE_PLUGIN_ROOT}; pass it explicitly for a direct call.'
+      'The /cycler:workflow-feature skill passes ${CLAUDE_PLUGIN_ROOT}; pass it explicitly for a direct call.'
   )
 }
 const PLUGIN_ROOT = args.pluginRoot
-// The cycler config, parsed and passed in by the /task skill. Everything project-specific lives
+// The cycler config, parsed and passed in by the /workflow-feature skill. Everything project-specific lives
 // here rather than in this file: the workflow used to name one project's Xcode schemes and npm
 // workspace layout in every prompt of every run, in every repo that installed it.
 const config = args?.config || {}
@@ -271,7 +271,7 @@ function terminalState(prResult) {
 // some unrelated uppercase token elsewhere in the request text.
 const LINEAR_URL_RE = /https?:\/\/linear\.app\/[^/\s]+\/issue\/([A-Z][A-Z0-9]*-\d+)/i
 const ISSUE_KEY_RE = /\b([A-Z][A-Z0-9]*-\d+)\b/
-// A lowercase key is only accepted when the ENTIRE request is that key ("/task apl-7"). Matching lowercase
+// A lowercase key is only accepted when the ENTIRE request is that key ("/workflow-feature apl-7"). Matching lowercase
 // anywhere in free-form text would swallow things like "covid-19" or "utf-8" as issue keys.
 const BARE_KEY_RE = /^\s*([A-Za-z][A-Za-z0-9]*-\d+)\s*$/
 const issueId = (

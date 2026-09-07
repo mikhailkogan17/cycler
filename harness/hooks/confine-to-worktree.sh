@@ -11,7 +11,7 @@
 # nothing stopped writes following the same path. This is the same class of failure as the node_modules
 # shadowing that cost APL-48, APL-50 and APL-53 a round each: work that lands in the other checkout.
 #
-# Scope: ONLY inside a /task worktree, like the other hooks here.
+# Scope: ONLY inside a /workflow-feature worktree, like the other hooks here.
 #
 # stdin: PreToolUse JSON. exit 0 = allow, exit 2 = deny (stderr goes back to the model).
 
@@ -23,7 +23,7 @@ FILE="$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.file_path // .tool_input.pat
 [ -n "$CWD" ] || CWD="$PWD"
 
 case "$CWD" in
-  # /task worktrees. This USED to be ~/.cyrus/worktrees/* — when that orchestrator went away the
+  # /workflow-feature worktrees. This USED to be ~/.cyrus/worktrees/* — when that orchestrator went away the
   # pattern matched nothing and every one of these hooks silently stopped firing. A guard that cannot
   # fire is worse than no guard, because the process still claims it is enforced.
   */.claude/worktrees/*) ;;

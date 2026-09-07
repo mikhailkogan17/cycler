@@ -50,8 +50,8 @@ t('the shipped example parses into usable values', () => {
   // The credentials are in this file now, not a second config.json. If they stop parsing, the
   // poller cannot refresh a token and dies silently 24h after setup.
   assert.ok(c.linear?.client_id && c.linear?.client_secret, 'the example lost its linear credentials');
-  assert.strictEqual(c.workflows?.default, '/cycler:task');
-  assert.strictEqual(c.workflows?.research, '/cycler:research');
+  assert.strictEqual(c.workflows?.default, '/cycler:workflow-feature');
+  assert.strictEqual(c.workflows?.research, '/cycler:workflow-research');
 });
 
 // $CYCLER_CONFIG names a file. If it does not exist, the answer is defaults — NOT a silent fall

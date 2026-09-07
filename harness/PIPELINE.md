@@ -46,7 +46,7 @@ a `completed` or `canceled` state are skipped regardless.
 look there before the log.
 
 **Which workflow step 3 dispatches** is decided from the issue's labels: `Research` or `Harness` →
-`/research`, everything else → `/task`. The dispatch comment names the route and why, so a mis-route
+`/workflow-research`, everything else → `/workflow-feature`. The dispatch comment names the route and why, so a mis-route
 is visible on the board rather than only in the log. `LINEAR_CLAUDE_WORKFLOW` overrides all of it.
 See `ROUTING.md` for the full table.
 

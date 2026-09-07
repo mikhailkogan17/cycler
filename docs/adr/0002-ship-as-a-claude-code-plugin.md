@@ -41,8 +41,8 @@ background sessions, and the desktop app, from one install.
 scripts additionally derive it from their own location so they work with no env var set. That was a
 real edit pass across hooks, skills, docs and the workflow.
 
-**Worse:** plugin skills are namespaced. `/task` became `/cycler:task`, and the poller had to be
-changed to dispatch the namespaced form — a bare `/task` sends a session a literal string with no
+**Worse:** plugin skills are namespaced. `/workflow-feature` became `/cycler:workflow-feature`, and the poller had to be
+changed to dispatch the namespaced form — a bare `/workflow-feature` sends a session a literal string with no
 skill behind it, which fails silently and looks exactly like a session that ignored its prompt.
 
 **Worse:** macOS-only for now, because `/cycler:start` writes a launchd job. Nothing else in

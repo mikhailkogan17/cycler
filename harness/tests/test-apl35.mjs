@@ -1,4 +1,4 @@
-// APL-35 — a Linear URL or bare key as the /task argument resolves into the contract.
+// APL-35 — a Linear URL or bare key as the /workflow-feature argument resolves into the contract.
 import { run } from './sim.mjs'
 import { makeResponder } from './stubs.mjs'
 import assert from 'node:assert'

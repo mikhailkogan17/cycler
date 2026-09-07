@@ -99,7 +99,7 @@ check('the hook does not fire outside a .claude/worktrees path', () => {
   // Scope, asserted in both directions by the cases above: inside a worktree an ungated commit is
   // blocked, and outside one it is not this hook's business.
   const outside = mkdtempSync(join(tmpdir(), 'not-a-worktree-'));
-  assert(run(outside, 'git commit -m x').allowed, 'the hook fired outside a /task worktree');
+  assert(run(outside, 'git commit -m x').allowed, 'the hook fired outside a /workflow-feature worktree');
   rmSync(outside, { recursive: true, force: true });
 });
 

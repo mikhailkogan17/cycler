@@ -3,7 +3,7 @@
   "owner": {
     "name": "Mikhail Kogan"
   },
-  "description": "Marketplace for the cycler plugin \u2014 the Linear to Claude Code loop, run entirely on your own machine.",
+  "description": "Marketplace for the cycler plugin — the Linear to Claude Code loop, run entirely on your own machine.",
   "version": "0.1.0",
   "plugins": [
     {
@@ -17,9 +17,10 @@
       "license": "MIT",
       "source": "./",
       "skills": [
-        "./skills/task",
-        "./skills/research",
-        "./skills/intake"
+        "./skills/workflow-feature",
+        "./skills/workflow-bug",
+        "./skills/workflow-research",
+        "./skills/workflow-intake"
       ],
       "commands": [
         "./commands"

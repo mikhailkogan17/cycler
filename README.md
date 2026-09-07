@@ -107,12 +107,30 @@ Then, in Linear, assign an issue to the Claude agent.
 
 ## Usage
 
+Four commands, all verbs, all run by you:
+
 | command | does |
 |---|---|
 | `/cycler:start` | set up whatever is missing, then start polling |
-| `/cycler:issue <KEY>` | dispatch one issue now, without waiting for the next poll |
 | `/cycler:stop` | unload the launchd job |
+| `/cycler:delegate <KEY>` | put one issue on the agent and dispatch it now, without waiting for the poll |
 | `/cycler:doctor` | diagnose the seven things that actually break |
+
+`/cycler:delegate` is the board's assign button, from the terminal you are already in. The work still
+happens in a separate background session — it does not run here.
+
+### Workflows
+
+The other half of the namespace. These are **not** commands you run: they run inside the dispatched
+session, named in `workflows` and dispatched by the poller. The `workflow-` prefix is there so one
+look at the list tells you which half you are in.
+
+| workflow | for |
+|---|---|
+| `/cycler:workflow-feature` | a feature, improvement, tech debt or bug — contract → implement → audit → gate → PR |
+| `/cycler:workflow-bug` | the same lifecycle in fix mode: the regression test comes before the fix |
+| `/cycler:workflow-research` | a question whose deliverable is a decision, not a diff. No contract, no gate |
+| `/cycler:workflow-intake` | writing a contract by hand first, then handing it to `workflow-feature`. Optional |
 
 > [!IMPORTANT]
 > **Anyone who can assign an issue to the agent can run code on your machine.** The issue becomes
@@ -139,8 +157,8 @@ repo:
   branch_prefix: claude/
 
 workflows:
-  default: /cycler:task        # contract → implement → audit → gate → PR
-  research: /cycler:research   # a decision, not a diff
+  default: /cycler:workflow-feature        # contract → implement → audit → gate → PR
+  research: /cycler:workflow-research   # a decision, not a diff
 
 dispatch:
   command: >

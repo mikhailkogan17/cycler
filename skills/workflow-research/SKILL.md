@@ -1,14 +1,14 @@
 ---
-name: research
-description: Answer a RESEARCH issue — investigate, decide, post findings to Linear. No code, no contract, no gate. Use for issues labelled Research, or any question whose deliverable is a decision rather than a diff.
+name: workflow-research
+description: The workflow a dispatched session runs for a RESEARCH issue — investigate, decide, post findings to Linear. No code, no contract, no gate. Use for issues labelled Research, or any question whose deliverable is a decision rather than a diff.
 ---
 
-# /research — investigation whose deliverable is a decision
+# /workflow-research — investigation whose deliverable is a decision
 
-`/task` is for changing code. This is for the issues where the output is a **recommendation** — the
+`/workflow-feature` is for changing code. This is for the issues where the output is a **recommendation** — the
 `RESEARCH:` issues on the APL board, "should we use X", "what is our exposure to Y".
 
-Running those through `/task` is waste: no contract to write, nothing for `gate.sh` to gate, no diff
+Running those through `/workflow-feature` is waste: no contract to write, nothing for `gate.sh` to gate, no diff
 to audit or review. Two research runs done this way cost **83k and 117k tokens** and produced cited,
 decisive answers. The same questions through the full harness would have paid for a contract stage,
 an audit, a gate and a review panel, all of which would have had nothing to judge.
@@ -100,7 +100,7 @@ Default **shallow**: read what the issue names, decide, post. Most research issu
 question and a shallow pass answers them for well under 100k tokens.
 
 Go deeper only when the question genuinely spans surfaces — several platforms, several subsystems.
-`/research <KEY> --deep` is that signal. Deep means more reading, **not** a fan-out of subagents: an
+`/workflow-research <KEY> --deep` is that signal. Deep means more reading, **not** a fan-out of subagents: an
 agent per sub-question costs a cold start each and returns prose you then have to reconcile. Both
 research runs that worked were single agents.
 

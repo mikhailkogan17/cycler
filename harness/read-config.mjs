@@ -5,7 +5,7 @@
 //   node harness/read-config.mjs --json
 //
 // Prints the value (lists one per line) and exits 0; prints the default and exits 0 when absent.
-// `--json` prints the WHOLE config as JSON — that is what the /task skill passes as args.config,
+// `--json` prints the WHOLE config as JSON — that is what the /workflow-feature skill passes as args.config,
 // so the workflow's prompts carry this repo's verify steps and escape hatch instead of defaults.
 import { readConfig, get } from '../lib/yaml.mjs';
 

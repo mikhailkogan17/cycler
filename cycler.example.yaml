@@ -29,8 +29,14 @@ workflows:
   # deliberately not a classifier: a model here would infer, less reliably, something already
   # recorded, and a router that returns the default for everything is indistinguishable from a
   # working one until something audits it.
-  default: /cycler:task        # contract → implement → audit → gate → PR
-  research: /cycler:research   # a decision, not a diff — nothing to gate or audit
+  #
+  # The value is always a WORKFLOW — the `workflow-` prefixed half of the /cycler: namespace. The
+  # other half (start, stop, delegate, doctor) are commands you run; routing an issue to one of
+  # those dispatches a session that configures the poller instead of doing the work.
+  default: /cycler:workflow-feature    # contract → implement → audit → gate → PR
+  feature: /cycler:workflow-feature    # the same thing, said out loud, for the Feature label
+  bug: /cycler:workflow-bug            # that lifecycle in fix mode: the regression test before the fix
+  research: /cycler:workflow-research  # a decision, not a diff — nothing to gate or audit
 
 dispatch:
   # The whole command, as a template: {workflow} {issue} {title} {url} {session}.

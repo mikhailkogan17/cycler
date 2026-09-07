@@ -1,6 +1,6 @@
 # Task Contract — <slug>
 
-> Every task starts by writing a contract. `/intake` fills this in BEFORE any code is written.
+> Every task starts by writing a contract. `/workflow-intake` fills this in BEFORE any code is written.
 > `/implement`, `/verify`, `/review` all read the SAME file — the contract is the single source
 > of truth. Copy to `.claude/harness/contracts/<slug>.md`.
 

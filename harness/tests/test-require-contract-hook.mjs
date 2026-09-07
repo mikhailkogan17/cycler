@@ -1,6 +1,6 @@
 // require-contract.sh — "you wrote a contract before editing source".
 //
-// The subtlety is in what identifies "your" contract. A /task worktree is named `claude-APL-15`, so
+// The subtlety is in what identifies "your" contract. A /workflow-feature worktree is named `claude-APL-15`, so
 // the key is in the name. A background agent's worktree is named `agent-<hex>` and carries no key at
 // all, and the old fallback matched the WHOLE basename — demanding a contract whose filename
 // contained that hex. APL-19 complied by renaming its contract to

@@ -60,8 +60,12 @@ cycler/
 ## 4. Interface
 
 Slash commands only — no CLI, no npm binary, no second install surface. `/cycler:start`,
-`/cycler:stop`, `/cycler:issue <KEY>`, `/cycler:doctor`. They are command files that instruct the
-session to run the underlying bash. `/cycler:start` is idempotent by design: it checks what is
+`/cycler:stop`, `/cycler:delegate <KEY>`, `/cycler:doctor`. They are command files that instruct the
+session to run the underlying bash. The skills in `skills/` land in the same `/cycler:` namespace but
+are not commands: they are the workflows a dispatched session runs, and they carry a `workflow-`
+prefix so a list showing both halves says which is which. `cycler:workflow:feature` would say it
+better and is not available — a skill name may hold only letters, digits, underscores and hyphens,
+so the one colon is the plugin's. `/cycler:start` is idempotent by design: it checks what is
 already configured and does only the missing parts, so "set it up" and "switch the loop back on"
 are the same command. Two commands for those would mean a user who ran the wrong one gets a
 poller that is configured and not running.
@@ -101,7 +105,7 @@ Environment overrides exist for the values launchd needs to force without editin
   field an agent lands in, and assigning one in Linear's UI is what puts it there. It is not a
   distinction a user has to know about; the one place it leaks is `linear-cli`, which exposes
   `--assignee` and no delegate flag, so `poller/lin-delegate` exists for CLI-driven starts.
-- **Routing** is a lookup on a label a human already wrote — `research` → `/research`, everything
+- **Routing** is a lookup on a label a human already wrote — `research` → `/workflow-research`, everything
   else → `workflows.default`. Deliberately not a classifier: a model would infer, less reliably,
   something already recorded, and a router that returns the default for everything is
   indistinguishable from a working one until something audits its choices.
@@ -119,7 +123,7 @@ Environment overrides exist for the values launchd needs to force without editin
   is not marked processed, so it retries on the next poll.
 - **Not the poller's job: issue state.** Transitions belong to the workflow, which knows the
   *outcome* — `linearSync('started' | 'open-questions' | 'pr-opened' | 'approved' | 'blocked-<stage>')`,
-  performed by the `/task` skill. A poller watching process liveness only knows a process ended.
+  performed by the `/workflow-feature` skill. A poller watching process liveness only knows a process ended.
 
 ## 7. The harness
 

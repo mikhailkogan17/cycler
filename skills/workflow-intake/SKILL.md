@@ -1,11 +1,11 @@
 ---
-name: intake
-description: OPTIONAL manual intake — write a task contract by hand, then pass contractPath to /task. For full automation just use /task directly.
+name: workflow-intake
+description: OPTIONAL manual intake, run by hand rather than dispatched — write a task contract by hand, then pass contractPath to /workflow-feature. For full automation just use /workflow-feature directly.
 ---
 
-# /intake — manual contract authoring (optional)
+# /workflow-intake — manual contract authoring (optional)
 
-For full automation, just use `/task` — it authors the contract itself. Use `/intake` when you want
+For full automation, just use `/workflow-feature` — it authors the contract itself. Use `/workflow-intake` when you want
 manual control of the contract before any code runs.
 
 READ `${CLAUDE_PLUGIN_ROOT}/harness/HARNESS.md` and `${CLAUDE_PLUGIN_ROOT}/harness/CONTRACT.md` first.
@@ -26,4 +26,4 @@ READ `${CLAUDE_PLUGIN_ROOT}/harness/HARNESS.md` and `${CLAUDE_PLUGIN_ROOT}/harne
 ## Stop condition
 
 - You MUST NOT edit code or run non-read-only commands.
-- Once confirmed, tell the user to run `/task` with `contractPath` set to this contract.
+- Once confirmed, tell the user to run `/workflow-feature` with `contractPath` set to this contract.
