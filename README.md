@@ -77,7 +77,7 @@ Claude Code plugin rather than a service you deploy and keep alive.
 | `/cycler:start` | set up whatever is missing, then start polling |
 | `/cycler:stop` | unload the launchd job |
 | `/cycler:delegate <KEY>` | put one issue on the agent and dispatch it now — the board's assign button, from here |
-| `/cycler:doctor` | diagnose the eight things that actually break |
+| `/cycler:doctor` | diagnose the nine things that actually break |
 
 > [!TIP]
 > `/cycler:start` checks your setup and adds whatever is missing: the config, the Linear OAuth

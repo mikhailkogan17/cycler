@@ -11,6 +11,12 @@ the OAuth credentials. Splitting a config by secrecy split it by nothing else: `
 question about cycler started with "which file?". One file, outside any repo, so the client secret is
 never one `git add .` from a public history.
 
+A repo-root `cycler.yaml` from before that merge is read by **nothing**, which is the worst way for
+config to be wrong: the file is version-controlled and looks authoritative, and every key in it is
+silently a default at runtime. Doctor check 8 names the file and the keys stranded in it (3.21) —
+written after one was found in a live repo still holding `worktree.link_workspace`, the key whose
+absence had cost three issues a fix round each.
+
 `~/.cycler/` still exists and holds **no config** — only state the poller writes: `token.json`,
 `processed.json` and the launchd logs. A file a program rewrites every 24 hours cannot also be the
 file you hand-edit.
@@ -212,6 +218,7 @@ filename from this one value so they cannot drift.
 | 3.18 | A skill's directory name equals the `name:` it is invoked by | `test-command-names.mjs` |
 | 3.19 | Every route in the shipped example names a workflow that exists | `test-command-names.mjs` |
 | 3.20 | Every command and workflow name is one Claude Code will load | `test-command-names.mjs` |
+| 3.21 | Doctor names a leftover repo-local `cycler.yaml` and the keys stranded in it | `test-command-names.mjs` |
 
 Every conditional key is asserted in **both** directions. A test that only checks the configured case
 passes against a hardcoded implementation; one that only checks the unconfigured case passes against

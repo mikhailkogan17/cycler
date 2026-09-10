@@ -1,11 +1,11 @@
 ---
-description: Diagnose a cycler install — config, token, launchd job, paths, repo, workflow, routes and gate.
+description: Diagnose a cycler install — config, token, launchd job, paths, repo, workflow, routes, gate and leftovers.
 ---
 
 Run every check below and report each as OK or the specific failure. Do not stop at the first
 failure; a partial diagnosis sends people to fix the wrong thing.
 
-These are the eight things that have actually broken, not a generic checklist.
+These are the nine things that have actually broken, not a generic checklist.
 
 ## 0. The config file
 
@@ -130,6 +130,44 @@ config written before that upgrade still routes to the old names. **An installed
 its version**, so until the version string changes the old skills are still on disk and the stale
 route resolves anyway — it breaks on the upgrade, not on the config edit that caused it. If a route
 is stale, say which line of the config to change, and to what.
+
+## 8. A leftover repo-local config
+
+```bash
+node -e '
+  const { existsSync, readFileSync } = require("node:fs");
+  const { execFileSync } = require("node:child_process");
+  const root = process.env.CLAUDE_PLUGIN_ROOT;
+  const repo = process.argv[1];
+  const found = ["cycler.yaml", "cycler.yml", ".cycler.yaml"]
+    .map((n) => repo + "/" + n).filter(existsSync);
+  if (!found.length) { console.log("repo config: none — the one config is the only config"); process.exit(0) }
+  const live = JSON.parse(execFileSync("node", [root + "/harness/read-config.mjs", "--json"], { encoding: "utf8" }) || "{}");
+  for (const f of found) {
+    const src = readFileSync(f, "utf8");
+    const keys = [...src.matchAll(/^([a-z_]+):/gm)].map((m) => m[1]);
+    const stranded = [...new Set(keys)].filter((k) => live[k] === undefined);
+    console.log("LEFTOVER  " + f + " — read by nothing");
+    console.log("          keys: " + [...new Set(keys)].join(", "));
+    if (stranded.length) console.log("          MISSING from the live config: " + stranded.join(", "));
+    for (const [pat, was] of [[/^routes:/m, "routes: (now workflows:)"], [/\/cycler:(task|research|intake)\b/, "a 0.2.0 workflow name"], [/^\s*mode:/m, "linear.mode (removed; it did nothing)"]])
+      if (pat.test(src)) console.log("          pre-migration marker: " + was);
+  }
+' "$REPO"
+```
+
+There is **one** config and it is `~/.config/cycler/config.yaml` ([spec 002](../docs/specs/002-config.md)).
+A `cycler.yaml` at a repo root is what that file replaced, and nothing has read one since. It is the
+worst kind of stale: it looks authoritative, it is version-controlled, and every key in it is
+silently a default at runtime.
+
+Report the stranded keys by name and say they are not in effect. `worktree.link_workspace` is the
+one with teeth — without it a worktree compiles its own `src/` against the **main** checkout's copy
+of every workspace package, and an export added in the worktree appears not to exist. Three issues
+each lost a fix round to that before anyone noticed the config was not being read.
+
+The fix is to move the keys into the live config and delete the file. Say both, in that order — a
+delete that loses `verify.steps` costs more than the stale file did.
 
 ## Report
 

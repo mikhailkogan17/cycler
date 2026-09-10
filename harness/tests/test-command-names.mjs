@@ -156,6 +156,48 @@ t('doctor catches a route naming a workflow that does not exist', () => {
   assert.match(run('repo:\n  base: main\n'), /none configured/, 'an unrouted config is not reported as such');
 });
 
+t('doctor catches a leftover repo-local cycler.yaml, and stays quiet without one', () => {
+  // The config merge left these behind in real repos. A cycler.yaml at a repo root looks
+  // authoritative and is version-controlled, but nothing has read one since spec 002 — so every key
+  // in it is silently a default. Found in ~/applygent on 2026-09-10 still holding
+  // worktree.link_workspace, the key whose absence cost APL-48, APL-50 and APL-53 a fix round each.
+  const src = readFileSync(join(ROOT, 'commands/doctor.md'), 'utf8');
+  const block = /## 8\.[\s\S]*?```bash\n([\s\S]*?)```/.exec(src);
+  assert.ok(block, 'doctor has no check 8');
+  const run = (repoFiles, live) => {
+    const repo = mkdtempSync(join(tmpdir(), 'cycler-repo-'));
+    for (const [name, body] of Object.entries(repoFiles)) writeFileSync(join(repo, name), body);
+    const cfg = join(mkdtempSync(join(tmpdir(), 'cycler-live-')), 'config.yaml');
+    writeFileSync(cfg, live);
+    return execFileSync('bash', ['-c', block[1]], {
+      encoding: 'utf8',
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: ROOT, CYCLER_CONFIG: cfg, REPO: repo },
+    });
+  };
+
+  const clean = run({}, 'repo:\n  base: main\n');
+  assert.match(clean, /none/, 'a repo with no leftover was not reported clean');
+  assert.ok(!/LEFTOVER/.test(clean), 'every repo is reported as having a leftover — the check cannot pass');
+
+  const dirty = run(
+    { 'cycler.yaml': 'routes:\n  default: /cycler:task\nworktree:\n  link_workspace: true\nlinear:\n  mode: auto\n' },
+    'repo:\n  base: main\n'
+  );
+  assert.match(dirty, /LEFTOVER/, 'a leftover cycler.yaml went unreported');
+  assert.match(dirty, /MISSING from the live config:.*worktree/,
+    'the stranded key was not named — naming it is the whole point of the check');
+  assert.match(dirty, /pre-migration marker: routes:/, 'the retired routes: key was not flagged');
+
+  // A leftover whose keys ARE all in the live config is still a leftover, but nothing is stranded.
+  const migrated = run(
+    { 'cycler.yaml': 'worktree:\n  link_workspace: true\n' },
+    'worktree:\n  link_workspace: true\n'
+  );
+  assert.match(migrated, /LEFTOVER/, 'the file still exists and is still read by nothing');
+  assert.ok(!/MISSING from the live config/.test(migrated),
+    'a fully migrated leftover reported stranded keys — the comparison is not comparing');
+});
+
 t('the number of doctor checks is the number both docs claim', () => {
   // Adding check 7 left "the seven things" standing in two files. A count in prose has nothing
   // holding it to the thing it counts, so it drifts on the very commit that changes the count.
