@@ -28,7 +28,7 @@
  *   launchctl kickstart -k gui/$(id -u)/<launchd.label>
  */
 
-import { spawn, exec } from 'node:child_process';
+import { spawn, exec, execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
@@ -442,6 +442,59 @@ async function checkLiveness() {
   writeFileSync(PENDING_PATH, JSON.stringify(keep, null, 2));
 }
 
+// ── The refresh race ─────────────────────────────────────────────────────────────────────────
+// The Claude Code CLI holds an OAuth access token that lives 8 hours behind a refresh token that
+// ROTATES: spending it invalidates it. Two sessions started seconds apart against an already
+// expired access token both try to refresh; one wins, and the loser presents a refresh token that
+// has already been consumed. The CLI reports that as "OAuth session expired and could not be
+// refreshed" — which names the wrong cause — and the session dies on its first turn. From the
+// board that is a dispatch which spawned and then went silent.
+//
+// APL-74 and APL-78 died exactly that way, three attempts each, always within three seconds of
+// each other, because dispatch() awaits only the SPAWN: poll() starts every due issue and they
+// then run concurrently.
+//
+// The fix is to guarantee that only ONE process ever performs a refresh. A fresh access token
+// means nobody needs to refresh and any number of sessions may start together; a stale one means
+// exactly one issue goes out this poll, it refreshes, and the next poll (180s) finds the
+// credential fresh and releases the rest. The expiry is read from the local keychain, so this
+// costs no network call and no inference call — the poller still makes one outbound request per
+// poll, which is the claim the README makes.
+const CRED_SERVICE = 'Claude Code-credentials';
+const CRED_FILE = join(homedir(), '.claude', '.credentials.json');
+const REFRESH_SKEW_MS = 60_000;
+
+// Keychain first: that is where the CLI puts it on macOS. The file is the fallback the CLI uses
+// where there is no keychain, and reading it costs nothing when it is absent.
+function defaultCredentialRead() {
+  try {
+    return execFileSync('security', ['find-generic-password', '-s', CRED_SERVICE, '-w'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch {
+    return existsSync(CRED_FILE) ? readFileSync(CRED_FILE, 'utf8') : null;
+  }
+}
+
+function readClaudeExpiry(read = defaultCredentialRead) {
+  try {
+    const raw = read();
+    if (!raw) return null;
+    const at = (JSON.parse(raw).claudeAiOauth || {}).expiresAt;
+    return Number.isFinite(at) ? at : null;
+  } catch {
+    return null;
+  }
+}
+
+// How many issues one poll may dispatch. An unreadable credential yields NO limit on purpose: a
+// machine whose keychain this process cannot read must behave exactly as it did before this
+// existed. Degrading to "dispatch nothing" would turn an unreadable keychain into a silent stall,
+// which is the failure mode every other guard in this file is written to avoid.
+function dispatchBudget(expiresAt, now = Date.now(), skewMs = REFRESH_SKEW_MS) {
+  if (!Number.isFinite(expiresAt)) return Infinity;
+  return expiresAt - now > skewMs ? Infinity : 1;
+}
+
 // issueId -> the attempt number the NEXT dispatch of it represents. Lives for one poll: it is the
 // only thing carrying retry count across the un-process/re-dispatch boundary within a single run.
 const carryAttempts = new Map();
@@ -464,6 +517,13 @@ async function poll() {
   const processed = new Set(loadJson(STATE_PATH, []));
   let changed = false;
 
+  const expiresAt = readClaudeExpiry();
+  let budget = dispatchBudget(expiresAt);
+  if (budget !== Infinity) {
+    log('claude credential is stale — dispatching one issue this poll so a single session performs '
+      + 'the refresh; the rest go out on the next poll');
+  }
+
   for (const issue of issues.nodes) {
     if (processed.has(issue.id)) continue;
     if (['completed', 'canceled'].includes(issue.state?.type)) continue;
@@ -476,6 +536,7 @@ async function poll() {
       await dispatch(issue);
       processed.add(issue.id);
       changed = true;
+      if (--budget <= 0) break;
     } catch (err) {
       logErr(`failed ${issue.identifier}: ${err.message}`); // retried on next poll
       // Post it too. Without this the issue just sits delegated with no comment, which is
@@ -494,13 +555,19 @@ async function poll() {
   }
 
   if (changed) writeFileSync(STATE_PATH, JSON.stringify([...processed], null, 2));
-  log(`poll ok: ${issues.nodes.length} delegated, ${processed.size} processed total`);
+  // The credential state is logged every poll on purpose: whether THIS process can read the
+  // keychain is a property of how it was started (launchd, not a shell), so the only honest place
+  // to find out is the launchd log itself.
+  const cred = expiresAt === null
+    ? 'credential unreadable'
+    : `credential expires ${new Date(expiresAt).toISOString()}`;
+  log(`poll ok: ${issues.nodes.length} delegated, ${processed.size} processed total, ${cred}`);
 }
 
 // Exported so the tests can exercise routing and the dispatch template without starting a poll —
 // a dispatch command that silently renders wrong is the failure this whole file is careful about,
 // and it is only checkable if it can be called.
-export { workflowFor, buildDispatchArgv, splitCommand, DEFAULT_DISPATCH };
+export { workflowFor, buildDispatchArgv, splitCommand, DEFAULT_DISPATCH, dispatchBudget, readClaudeExpiry };
 
 // Run only when executed directly, not when imported.
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -57,6 +57,30 @@ different field, looks correct in the UI and dispatches nothing.
 | 4.4 | `PATH` is prepended with `dispatch.path_prepend` before spawning | `test-poller-config.mjs` (loaded, not asserted) |
 | 4.5 | The session id is parsed from the `backgrounded · <id>` line | `test-poller-live.mjs` |
 | 4.6 | The working directory is `repo.path` | `test-poller-live.mjs` |
+| 4.7 | A **stale** Claude credential limits the poll to one dispatch, so one process refreshes | `test-refresh-race.mjs` |
+| 4.8 | A **fresh** credential restricts nothing, and an **unreadable** one restricts nothing either | `test-refresh-race.mjs` |
+| 4.9 | The expiry read never throws, whatever the credential store returns | `test-refresh-race.mjs` |
+| 4.10 | `poll()` spends the budget — the limit is wired in, not merely computed | `test-refresh-race.mjs` |
+
+4.7 is the fix for a race, not for an expiry. The CLI's access token lives 8 hours behind a refresh
+token that **rotates**: spending it invalidates it. `dispatch()` awaits only the spawn, so two due
+issues produce two sessions seconds apart; against an already-stale access token both try to
+refresh, one wins, and the loser presents a token that has been spent. The CLI reports that as
+`OAuth session expired and could not be refreshed`, which names the wrong cause, and the session
+dies on its first turn — a dispatch that spawned and then went silent. APL-74 and APL-78 died that
+way three times each on 2026-09-07, every pair within three seconds.
+
+The expiry is read from the local keychain, so 4.7 costs no network call and no inference call: the
+poller still makes exactly one outbound request per poll.
+
+4.8's unreadable case is deliberate and is the half most likely to be "simplified" away. Whether
+this process can read the keychain is a property of how it was started, and turning "cannot read"
+into "dispatch nothing" would convert a permissions question into a silent stall — the failure mode
+every other guard in the poller exists to prevent. Verified in the real path: a launchd-started
+poll logs the expiry, not `credential unreadable`.
+
+4.10 exists because every other row here stays green if `poll()` ignores what `dispatchBudget()`
+returns. A correct check nothing consults is the exact shape of bug this repo keeps finding.
 
 4.3 is a security property, not a formatting one: issue titles are attacker-influenced text in any
 shared workspace. 4.4 exists because launchd hands a job `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, so the
