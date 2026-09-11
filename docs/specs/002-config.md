@@ -132,6 +132,7 @@ information and cannot go stale against the route beside it.
 | `dispatch.start_grace_seconds` | `300` | how long a session has to post its start marker before it is declared dead |
 | `dispatch.max_attempts` | `3` | how many times one issue is re-dispatched before the poller gives up and says so |
 | `dispatch.max_concurrent` | `1` | how many dispatched sessions may run at once; `0` means no limit |
+| `dispatch.cooldown_fallback_minutes` | `60` | how long to hold after a usage-limit death whose reset time could not be read |
 
 The template is split like a shell would but **without** a shell, and placeholders are substituted
 *after* the split — so an issue title can never introduce an argument. `--print` must never appear:
@@ -224,6 +225,7 @@ filename from this one value so they cannot drift.
 | 3.20 | Every command and workflow name is one Claude Code will load | `test-command-names.mjs` |
 | 3.21 | Doctor names a leftover repo-local `cycler.yaml` and the keys stranded in it | `test-command-names.mjs` |
 | 3.22 | `dispatch.max_concurrent` bounds concurrent runs, and `0` opts out rather than stalling | `test-concurrency.mjs` |
+| 3.23 | A usage-limit death holds the queue until the reset named in the message | `test-cooldown.mjs` |
 
 Every conditional key is asserted in **both** directions. A test that only checks the configured case
 passes against a hardcoded implementation; one that only checks the unconfigured case passes against

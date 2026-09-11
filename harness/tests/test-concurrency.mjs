@@ -89,7 +89,7 @@ t('poll() actually consults the slot count — the pure functions are wired in',
   const loop = /const processed = new Set\(loadJson\(STATE_PATH[\s\S]*?\n  }\n\n  if \(changed\)/.exec(src);
   assert.ok(loop, 'the dispatch loop was not found — this test is asserting nothing');
   assert.match(loop[0], /=\s*countRunningSessions\(/, 'poll() never asks what is already running');
-  assert.match(loop[0], /=\s*concurrencySlots\(/, 'poll() never converts that into free slots');
+  assert.match(loop[0], /concurrencySlots\(running\)/, 'poll() never converts that into free slots');
   assert.match(loop[0], /Math\.min\(\s*credBudget\s*,\s*slots\s*\)/,
     'poll() does not combine the credential budget with the slot count — one of the two limits is ignored');
 });

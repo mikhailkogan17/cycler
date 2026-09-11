@@ -63,6 +63,8 @@ different field, looks correct in the UI and dispatches nothing.
 | 4.10 | `poll()` spends the budget — the limit is wired in, not merely computed | `test-refresh-race.mjs` |
 | 4.11 | At most `dispatch.max_concurrent` dispatched sessions run at once (default 1) | `test-concurrency.mjs` |
 | 4.12 | Only **busy** sessions this poller named count; an unreadable registry restricts nothing | `test-concurrency.mjs` |
+| 4.13 | A session that ended on the account usage limit holds the queue until the window resets | `test-cooldown.mjs` |
+| 4.14 | Only a limit message holds it; the reset time is read from the message, capped, never negative | `test-cooldown.mjs` |
 
 4.7 is the fix for a race, not for an expiry. The CLI's access token lives 8 hours behind a refresh
 token that **rotates**: spending it invalidates it. `dispatch()` awaits only the spawn, so two due
@@ -92,6 +94,26 @@ one-request-per-poll claim above still holds. Only sessions named the way `dispa
 `busy`: the two sessions above sat `idle`/`blocked` for fifteen hours after hitting the limit, and a
 poller that counted those would never dispatch again. An unreadable registry restricts nothing, for
 the same reason as 4.8.
+
+4.13 exists because 4.11 was not enough, and the gap is worth naming precisely. Serialising stops
+two runs from racing; it does not stop them from emptying the same usage window one after the other.
+On 2026-09-11 APL-78 ran **alone** for 22 minutes across 14 agents, finished, and APL-74 started
+three minutes later into what was left and died at its last stage — eleven straight `holding off`
+lines in the log, nothing concurrent at any point. One run of the feature workflow is 14–17 agents;
+two do not fit in one window, and no amount of spacing changes that.
+
+What changes it is not starting the second run until the window has reset, and the CLI says when
+that is in the message it kills the session with: `You've hit your session limit · resets 9am
+(Asia/Jerusalem)`. That message is read from `claude logs <id>` — local, no network call and no
+inference call, like the other two guards — once, when a watched session stops being busy.
+`running.json` exists for that one reason: `pending.json` is dropped as soon as a session proves it
+STARTED, and a limit is hit hours later.
+
+4.14 is the half that keeps 4.13 from becoming a stall. Only a limit message holds the queue, so an
+ordinary failure does not; a reset that has already passed today is read as tomorrow rather than as
+a hold in the past, which would be no hold at all; a message whose reset cannot be read still holds,
+on `dispatch.cooldown_fallback_minutes`, because knowing the window is spent is the load-bearing
+half; and every hold is capped at six hours, so a misparse cannot quietly stall the board for a day.
 
 4.8's unreadable case is deliberate and is the half most likely to be "simplified" away. Whether
 this process can read the keychain is a property of how it was started, and turning "cannot read"

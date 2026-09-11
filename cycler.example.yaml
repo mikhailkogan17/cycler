@@ -75,6 +75,9 @@ dispatch:
 #   dispatch.max_concurrent   how many dispatched sessions may run at once (default 1). Raise it only
 #                         with a reason: each run fans out to several subagents against one shared
 #                         usage pool, and two at once is what exhausted it. 0 means no limit.
+#   dispatch.cooldown_fallback_minutes   after a session dies on the account usage limit the poller
+#                         waits for the reset named in that message; this is the fallback when the
+#                         message has no readable reset time (default 60).
 #   verify.steps          slow checks the gate leaves out, run by the verify agent
 #   worktree.link_workspace / worktree.bootstrap   what a fresh worktree needs before it can build
 #   escape_hatch.max_files / escape_hatch.paths    past these, run the full workflow, not inline

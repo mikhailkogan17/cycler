@@ -45,6 +45,10 @@ const TOKEN_PATH = join(DIR, 'token.json');
 const STATE_PATH = join(DIR, 'processed.json');
 // Dispatch records awaiting proof of life. See checkLiveness().
 const PENDING_PATH = join(DIR, 'pending.json');
+// Sessions confirmed alive, kept until they leave the busy state. See "The usage-limit cooldown".
+const RUNNING_PATH = join(DIR, 'running.json');
+// When the account's usage window is known to be spent, and why.
+const COOLDOWN_PATH = join(DIR, 'cooldown.json');
 
 const REDIRECT_URI = 'http://localhost:8787/callback';
 const SCOPES = 'read,write,app:assignable,app:mentionable';
@@ -75,6 +79,11 @@ const START_GRACE_MS = Number(cfg('dispatch.start_grace_seconds') ?? 300) * 1000
 const MAX_DISPATCH_ATTEMPTS = Number(cfg('dispatch.max_attempts') ?? 3);
 // How many dispatched sessions may run AT ONCE. See "Concurrency" below for why the default is 1.
 const MAX_CONCURRENT = Number(cfg('dispatch.max_concurrent') ?? 1);
+// Fallback hold when a limit message parses as a limit but its reset time does not parse, and the
+// ceiling that no parsed reset may exceed. The ceiling is not paranoia: a misread "resets 9am" that
+// landed a year out would stall the queue silently, which is the one outcome worse than the burn.
+const COOLDOWN_FALLBACK_MS = Number(cfg('dispatch.cooldown_fallback_minutes') ?? 60) * 60_000;
+const COOLDOWN_CEILING_MS = 6 * 60 * 60_000;
 
 // Route by label, per harness/ROUTING.md. Until this existed the poller dispatched /workflow-feature for
 // EVERYTHING, so that table was advice the only automated path ignored — a Research issue got a
@@ -404,7 +413,18 @@ async function checkLiveness() {
 
     if (comments.nodes.some((c) => c.body.includes(`harness:${rec.identifier}:`))) {
       log(`liveness ok: ${rec.identifier} session=${rec.session || 'unknown'} started`);
-      continue; // confirmed alive; drop the record
+      // Confirmed alive, so this record's job here is done — but the session now has to be watched
+      // for how it ENDS, which is a different question and a much later one. See reviewRunning().
+      if (rec.session) {
+        try {
+          const watched = loadJson(RUNNING_PATH, []).filter((r) => r.session !== rec.session);
+          watched.push({ session: rec.session, identifier: rec.identifier, at: Date.now() });
+          writeFileSync(RUNNING_PATH, JSON.stringify(watched, null, 2));
+        } catch (err) {
+          logErr(`could not watch ${rec.identifier} for a usage limit: ${err.message}`);
+        }
+      }
+      continue;
     }
 
     const attempts = (rec.attempts || 1);
@@ -526,8 +546,7 @@ function defaultAgentsRead() {
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 });
 }
 
-// null means "could not tell" — distinct from 0, which is a confident "nothing is running".
-function countRunningSessions(read = defaultAgentsRead) {
+function readAgents(read) {
   let parsed;
   try {
     parsed = JSON.parse(read());
@@ -535,8 +554,22 @@ function countRunningSessions(read = defaultAgentsRead) {
     return null;
   }
   const list = Array.isArray(parsed) ? parsed : (parsed && parsed.agents);
-  if (!Array.isArray(list)) return null;
+  return Array.isArray(list) ? list : null;
+}
+
+// null means "could not tell" — distinct from 0, which is a confident "nothing is running".
+function countRunningSessions(read = defaultAgentsRead) {
+  const list = readAgents(read);
+  if (list === null) return null;
   return list.filter((a) => a && a.status === 'busy' && SESSION_NAME_RE.test(String(a.name || ''))).length;
+}
+
+// Short ids of everything still busy, for deciding which watched sessions have actually stopped.
+// An unreadable registry yields an empty set, which only means a watched session is read one poll
+// early — harmless, since reading a live session's log finds no limit message.
+function busySessionIds(read = defaultAgentsRead) {
+  const list = readAgents(read) || [];
+  return new Set(list.filter((a) => a && a.status === 'busy').map((a) => String(a.id || '')));
 }
 
 // Fails OPEN, for the same reason dispatchBudget() does: a machine where this process cannot ask
@@ -546,6 +579,98 @@ function concurrencySlots(running, max = MAX_CONCURRENT) {
   if (running === null) return Infinity;
   if (!Number.isFinite(max) || max <= 0) return Infinity;
   return Math.max(0, max - running);
+}
+
+// ── The usage-limit cooldown ─────────────────────────────────────────────────────────────────
+// max_concurrent stops two runs from racing each other. It does NOT stop them from emptying the
+// same pool one after the other, and that is what happened on 2026-09-11: APL-78 ran alone for 22
+// minutes across 14 agents, finished, and APL-74 started three minutes later into what was left of
+// the same window and died at its last stage. Nothing ran concurrently — the log is eleven straight
+// "holding off" lines — so serialising was never going to be enough on its own.
+//
+// One run of the feature workflow is 14-17 agents. Two of them do not fit in one usage window, and
+// no amount of spacing changes that; what changes it is not starting the second run until the
+// window has actually reset. The CLI says exactly when that is, in the message it kills the session
+// with: "You've hit your session limit · resets 9am (Asia/Jerusalem)".
+//
+// That message is read from `claude logs <id>` — local, no network call and no inference call, same
+// as the other two guards. It is only read once, when a session this poller started stops being
+// busy, which is why running.json exists: pending.json is dropped as soon as a session proves it
+// STARTED, and a limit is hit hours after that.
+const LIMIT_RE = /hit your (?:session|usage) limit/i;
+const RESET_RE = /resets?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:\(([^)]+)\))?/i;
+
+// Wall-clock minutes since midnight in an IANA zone, or null when the zone is not one this runtime
+// knows. Intl is the only timezone database available here, and a Workflow-style "parse it by hand"
+// would be wrong twice a year.
+function zoneMinutes(tz, now) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US',
+      { timeZone: tz, hour12: false, hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(now));
+    const h = Number(parts.find((x) => x.type === 'hour').value);
+    const m = Number(parts.find((x) => x.type === 'minute').value);
+    return (h % 24) * 60 + m;
+  } catch {
+    return null;
+  }
+}
+
+// Returns the epoch ms to hold until, or null when the text is not a limit message at all. A limit
+// message whose reset time cannot be read still returns a hold — knowing the window is spent is the
+// load-bearing half; knowing exactly when it reopens only sharpens it.
+function parseLimitReset(text, now = Date.now(), fallbackMs = COOLDOWN_FALLBACK_MS, ceilingMs = COOLDOWN_CEILING_MS) {
+  if (typeof text !== 'string' || !LIMIT_RE.test(text)) return null;
+  const m = RESET_RE.exec(text);
+  const zone = m && m[4];
+  const nowMin = zone ? zoneMinutes(zone, now) : null;
+  if (!m || nowMin === null) return now + fallbackMs;
+  let hour = Number(m[1]);
+  const min = Number(m[2] || 0);
+  const ampm = (m[3] || '').toLowerCase();
+  if (hour > 23 || min > 59) return now + fallbackMs;
+  if (ampm === 'pm' && hour < 12) hour += 12;
+  if (ampm === 'am' && hour === 12) hour = 0;
+  const targetMin = hour * 60 + min;
+  // The reset is always in the future: the same clock time today if it has not passed yet,
+  // tomorrow's if it has.
+  const delta = targetMin > nowMin ? targetMin - nowMin : targetMin - nowMin + 24 * 60;
+  return now + Math.min(delta * 60_000, ceilingMs);
+}
+
+function cooldownRemaining(state, now = Date.now()) {
+  const until = state && Number(state.until);
+  return Number.isFinite(until) && until > now ? until - now : 0;
+}
+
+// The tail is enough: the limit message is the last thing a killed session prints.
+function defaultLogsRead(id) {
+  return execFileSync(CLAUDE_BIN, ['logs', id],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, maxBuffer: 4 << 20 });
+}
+
+// Sessions this poller started, still being watched. Anything that has stopped being busy is read
+// once for a limit message and then forgotten — a session that ended for any other reason leaves
+// no trace here, which is the point: only a limit holds the queue.
+function reviewRunning(readLogs = defaultLogsRead, busyIds = null) {
+  const watched = loadJson(RUNNING_PATH, []);
+  if (!watched.length) return null;
+  const keep = [];
+  let hold = null;
+  for (const rec of watched) {
+    if (busyIds && rec.session && busyIds.has(rec.session)) { keep.push(rec); continue; }
+    let out = '';
+    try { out = readLogs(rec.session); } catch { /* gone, or unreadable — either way stop watching */ }
+    const until = parseLimitReset(out);
+    if (until !== null) {
+      logErr(`${rec.identifier} (session ${rec.session}) ended on the account's usage limit`);
+      hold = Math.max(hold || 0, until);
+    }
+  }
+  writeFileSync(RUNNING_PATH, JSON.stringify(keep, null, 2));
+  if (hold === null) return null;
+  const state = { until: hold, reason: 'a dispatched session ended on the account usage limit', at: Date.now() };
+  writeFileSync(COOLDOWN_PATH, JSON.stringify(state, null, 2));
+  return state;
 }
 
 // issueId -> the attempt number the NEXT dispatch of it represents. Lives for one poll: it is the
@@ -577,7 +702,14 @@ async function poll() {
       + 'the refresh; the rest go out on the next poll');
   }
   const running = countRunningSessions();
-  const slots = concurrencySlots(running);
+  // Read once a session stops being busy: did it stop because the account's window ran out?
+  reviewRunning(defaultLogsRead, busySessionIds());
+  const cooling = cooldownRemaining(loadJson(COOLDOWN_PATH, null));
+  if (cooling > 0) {
+    log(`holding off: a dispatched session ended on the account usage limit — nothing goes out for `
+      + `another ${Math.ceil(cooling / 60_000)} min, when the window resets`);
+  }
+  const slots = cooling > 0 ? 0 : concurrencySlots(running);
   if (slots === 0) {
     log(`holding off: ${running} dispatched session(s) still running and dispatch.max_concurrent is `
       + `${MAX_CONCURRENT} — the queue moves on the next poll that finds a free slot`);
@@ -630,7 +762,7 @@ async function poll() {
 // a dispatch command that silently renders wrong is the failure this whole file is careful about,
 // and it is only checkable if it can be called.
 export { workflowFor, buildDispatchArgv, splitCommand, DEFAULT_DISPATCH, dispatchBudget, readClaudeExpiry,
-  countRunningSessions, concurrencySlots };
+  countRunningSessions, concurrencySlots, busySessionIds, parseLimitReset, cooldownRemaining };
 
 // Run only when executed directly, not when imported.
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
