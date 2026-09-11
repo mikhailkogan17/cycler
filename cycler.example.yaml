@@ -72,6 +72,9 @@ dispatch:
 # Also available, and left out here because almost nobody overrides them:
 #   dispatch.start_grace_seconds / dispatch.max_attempts   how long a session gets to post its start
 #                         marker before it is declared dead, and how many times it is re-dispatched
+#   dispatch.max_concurrent   how many dispatched sessions may run at once (default 1). Raise it only
+#                         with a reason: each run fans out to several subagents against one shared
+#                         usage pool, and two at once is what exhausted it. 0 means no limit.
 #   verify.steps          slow checks the gate leaves out, run by the verify agent
 #   worktree.link_workspace / worktree.bootstrap   what a fresh worktree needs before it can build
 #   escape_hatch.max_files / escape_hatch.paths    past these, run the full workflow, not inline

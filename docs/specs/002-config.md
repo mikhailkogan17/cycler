@@ -131,6 +131,7 @@ information and cannot go stale against the route beside it.
 | `dispatch.path_prepend` | `~/.local/bin ~/bin /opt/homebrew/bin /usr/local/bin` | prepended to the child's `PATH` |
 | `dispatch.start_grace_seconds` | `300` | how long a session has to post its start marker before it is declared dead |
 | `dispatch.max_attempts` | `3` | how many times one issue is re-dispatched before the poller gives up and says so |
+| `dispatch.max_concurrent` | `1` | how many dispatched sessions may run at once; `0` means no limit |
 
 The template is split like a shell would but **without** a shell, and placeholders are substituted
 *after* the split — so an issue title can never introduce an argument. `--print` must never appear:
@@ -142,7 +143,10 @@ Spawning a session is not the same as the session running: `claude --background`
 immediately and a session can still die on its first turn — an expired login does exactly that, in
 under a second, and from the board that is indistinguishable from a healthy run that has not
 commented yet. `start_grace_seconds` is the window; below the time your first skill step actually
-takes, healthy runs are declared dead and duplicated. `max_attempts` bounds the retry so a
+takes, healthy runs are declared dead and duplicated. `max_concurrent` is the one to raise only with a reason: each dispatched session fans out to
+several subagents against a shared usage pool, and two concurrent runs are what exhausted it on
+2026-09-10 (see 001 §4.11). `0` reads as "no limit", not "dispatch nothing" — the same reading every
+other opt-out here takes. `max_attempts` bounds the retry so a
 permanently broken dispatch cannot loop.
 
 `path_prepend` exists because launchd hands a job `PATH=/usr/bin:/bin:/usr/sbin:/sbin` and the
@@ -219,6 +223,7 @@ filename from this one value so they cannot drift.
 | 3.19 | Every route in the shipped example names a workflow that exists | `test-command-names.mjs` |
 | 3.20 | Every command and workflow name is one Claude Code will load | `test-command-names.mjs` |
 | 3.21 | Doctor names a leftover repo-local `cycler.yaml` and the keys stranded in it | `test-command-names.mjs` |
+| 3.22 | `dispatch.max_concurrent` bounds concurrent runs, and `0` opts out rather than stalling | `test-concurrency.mjs` |
 
 Every conditional key is asserted in **both** directions. A test that only checks the configured case
 passes against a hardcoded implementation; one that only checks the unconfigured case passes against

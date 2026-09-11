@@ -73,6 +73,8 @@ const MAX_PER_POLL = 50;
 // against.
 const START_GRACE_MS = Number(cfg('dispatch.start_grace_seconds') ?? 300) * 1000;
 const MAX_DISPATCH_ATTEMPTS = Number(cfg('dispatch.max_attempts') ?? 3);
+// How many dispatched sessions may run AT ONCE. See "Concurrency" below for why the default is 1.
+const MAX_CONCURRENT = Number(cfg('dispatch.max_concurrent') ?? 1);
 
 // Route by label, per harness/ROUTING.md. Until this existed the poller dispatched /workflow-feature for
 // EVERYTHING, so that table was advice the only automated path ignored — a Research issue got a
@@ -495,6 +497,57 @@ function dispatchBudget(expiresAt, now = Date.now(), skewMs = REFRESH_SKEW_MS) {
   return expiresAt - now > skewMs ? Infinity : 1;
 }
 
+// ── Concurrency ──────────────────────────────────────────────────────────────────────────────
+// A dispatched session is not one agent. /cycler:workflow-feature runs task-orchestration.js, which
+// fans out to ~5-9 subagents for a normal run and up to ~70 in the worst case, most of them on the
+// inherited model. Two of those at once share ONE account-level usage pool, and neither can see the
+// other spending it: the workflow's own budget guard reads `budget.remaining()`, which is Infinity
+// unless a budget was set, and a budget CANNOT be set for a dispatched session — `--max-budget-usd`
+// only works with `--print`, and `--print` conflicts with `--background` (see the header).
+//
+// So the guard inside the workflow is unreachable from here by construction, and the only lever the
+// poller actually holds is how many runs it starts. APL-74 and APL-78 went out in the same poll on
+// 2026-09-10 and hit the session limit together 30 minutes later, both blocked at their audit stage
+// with the diff unverified. Serialising costs a poll interval (180s) per issue and nothing else:
+// nothing is dropped, the rest simply go out on later polls.
+//
+// The count comes from `claude agents --json` — a local read of this machine's session registry,
+// ~0.2s, no network call and no inference call, so the README's "one outbound request per poll,
+// and never an LLM call" still holds.
+//
+// Only sessions this poller could have started are counted, identified by the name dispatch() gives
+// them ("[APL-78] title"), and only while they are `busy`. Counting an idle one would be a stall
+// with extra steps: yesterday's two sessions sat `idle`/`blocked` for fifteen hours after hitting
+// the limit, and a poller that counted those would never dispatch again.
+const SESSION_NAME_RE = /^\[[A-Z][A-Z0-9]*-\d+\]/;
+
+function defaultAgentsRead() {
+  return execFileSync(CLAUDE_BIN, ['agents', '--json'],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 });
+}
+
+// null means "could not tell" — distinct from 0, which is a confident "nothing is running".
+function countRunningSessions(read = defaultAgentsRead) {
+  let parsed;
+  try {
+    parsed = JSON.parse(read());
+  } catch {
+    return null;
+  }
+  const list = Array.isArray(parsed) ? parsed : (parsed && parsed.agents);
+  if (!Array.isArray(list)) return null;
+  return list.filter((a) => a && a.status === 'busy' && SESSION_NAME_RE.test(String(a.name || ''))).length;
+}
+
+// Fails OPEN, for the same reason dispatchBudget() does: a machine where this process cannot ask
+// what is running must behave exactly as it did before this existed. Turning "I don't know" into
+// "dispatch nothing" would make an unreadable registry a silent, permanent stall.
+function concurrencySlots(running, max = MAX_CONCURRENT) {
+  if (running === null) return Infinity;
+  if (!Number.isFinite(max) || max <= 0) return Infinity;
+  return Math.max(0, max - running);
+}
+
 // issueId -> the attempt number the NEXT dispatch of it represents. Lives for one poll: it is the
 // only thing carrying retry count across the un-process/re-dispatch boundary within a single run.
 const carryAttempts = new Map();
@@ -518,13 +571,22 @@ async function poll() {
   let changed = false;
 
   const expiresAt = readClaudeExpiry();
-  let budget = dispatchBudget(expiresAt);
-  if (budget !== Infinity) {
+  const credBudget = dispatchBudget(expiresAt);
+  if (credBudget !== Infinity) {
     log('claude credential is stale — dispatching one issue this poll so a single session performs '
       + 'the refresh; the rest go out on the next poll');
   }
+  const running = countRunningSessions();
+  const slots = concurrencySlots(running);
+  if (slots === 0) {
+    log(`holding off: ${running} dispatched session(s) still running and dispatch.max_concurrent is `
+      + `${MAX_CONCURRENT} — the queue moves on the next poll that finds a free slot`);
+  }
+  let budget = Math.min(credBudget, slots);
 
   for (const issue of issues.nodes) {
+    // Checked at the TOP, not only after a dispatch: a budget that starts at 0 must start nothing.
+    if (budget <= 0) break;
     if (processed.has(issue.id)) continue;
     if (['completed', 'canceled'].includes(issue.state?.type)) continue;
     try {
@@ -536,7 +598,7 @@ async function poll() {
       await dispatch(issue);
       processed.add(issue.id);
       changed = true;
-      if (--budget <= 0) break;
+      budget -= 1;
     } catch (err) {
       logErr(`failed ${issue.identifier}: ${err.message}`); // retried on next poll
       // Post it too. Without this the issue just sits delegated with no comment, which is
@@ -567,7 +629,8 @@ async function poll() {
 // Exported so the tests can exercise routing and the dispatch template without starting a poll —
 // a dispatch command that silently renders wrong is the failure this whole file is careful about,
 // and it is only checkable if it can be called.
-export { workflowFor, buildDispatchArgv, splitCommand, DEFAULT_DISPATCH, dispatchBudget, readClaudeExpiry };
+export { workflowFor, buildDispatchArgv, splitCommand, DEFAULT_DISPATCH, dispatchBudget, readClaudeExpiry,
+  countRunningSessions, concurrencySlots };
 
 // Run only when executed directly, not when imported.
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {

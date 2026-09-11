@@ -82,7 +82,8 @@ t('poll() actually spends the budget — the pure function is wired in', () => {
   const loop = /const processed = new Set\(loadJson\(STATE_PATH[\s\S]*?\n  }\n\n  if \(changed\)/.exec(src);
   assert.ok(loop, 'the dispatch loop was not found — this test is asserting nothing');
   assert.match(loop[0], /=\s*dispatchBudget\(/, 'poll() never asks for a budget');
-  assert.match(loop[0], /--budget\s*<=\s*0\)\s*break/, 'poll() never stops when the budget runs out');
+  assert.match(loop[0], /if\s*\(budget\s*<=\s*0\)\s*break/, 'poll() never stops when the budget runs out');
+  assert.match(loop[0], /budget\s*-=\s*1/, 'poll() never spends the budget, so the limit can never be reached');
 });
 
 process.exit(fails ? 1 : 0);

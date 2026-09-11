@@ -61,6 +61,8 @@ different field, looks correct in the UI and dispatches nothing.
 | 4.8 | A **fresh** credential restricts nothing, and an **unreadable** one restricts nothing either | `test-refresh-race.mjs` |
 | 4.9 | The expiry read never throws, whatever the credential store returns | `test-refresh-race.mjs` |
 | 4.10 | `poll()` spends the budget — the limit is wired in, not merely computed | `test-refresh-race.mjs` |
+| 4.11 | At most `dispatch.max_concurrent` dispatched sessions run at once (default 1) | `test-concurrency.mjs` |
+| 4.12 | Only **busy** sessions this poller named count; an unreadable registry restricts nothing | `test-concurrency.mjs` |
 
 4.7 is the fix for a race, not for an expiry. The CLI's access token lives 8 hours behind a refresh
 token that **rotates**: spending it invalidates it. `dispatch()` awaits only the spawn, so two due
@@ -72,6 +74,24 @@ way three times each on 2026-09-07, every pair within three seconds.
 
 The expiry is read from the local keychain, so 4.7 costs no network call and no inference call: the
 poller still makes exactly one outbound request per poll.
+
+4.11 exists because a dispatched session is not one agent. `/cycler:workflow-feature` runs
+`task-orchestration.js`, which fans out to ~5–9 subagents on a normal run and up to ~70 in the worst
+case. Two of those at once share one account-level usage pool and neither can see the other spending
+it — and the budget guard inside the workflow **cannot** be armed for a dispatched run, because
+`--max-budget-usd` only works with `--print` and `--print` conflicts with `--background` (4.2). So
+the number of runs the poller starts is the only lever that exists. APL-74 and APL-78 went out in
+the same poll on 2026-09-10 and hit the session limit together thirty minutes later, both blocked at
+their audit stage with the diff unverified. Serialising costs one poll interval per issue and
+nothing else: nothing is dropped, the rest go out on later polls.
+
+4.12 is what keeps 4.11 from becoming a stall. The count comes from `claude agents --json` — a local
+read of this machine's session registry, ~0.2s, no network call and no inference call, so the
+one-request-per-poll claim above still holds. Only sessions named the way `dispatch()` names them
+(`[APL-78] title`) count, so a human's own window never holds the queue, and only while they are
+`busy`: the two sessions above sat `idle`/`blocked` for fifteen hours after hitting the limit, and a
+poller that counted those would never dispatch again. An unreadable registry restricts nothing, for
+the same reason as 4.8.
 
 4.8's unreadable case is deliberate and is the half most likely to be "simplified" away. Whether
 this process can read the keychain is a property of how it was started, and turning "cannot read"
