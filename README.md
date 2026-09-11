@@ -179,8 +179,9 @@ flowchart TD
   no writes outside the session's worktree. Prose can be argued with; a hook cannot.
 - **Audit is arithmetic before it is judgement.** A script checks paths, scope, secrets and whether
   the run edited its own contract. Only then does an agent answer what a script cannot.
-- **Review runs four lenses in parallel** — bugs, contract, test gaps, scope creep. Only blocking
-  findings get an adversarial refuter, and only the lens that raised one is re-run after a fix.
+- **Review runs three lenses in parallel** — bugs, test gaps, and contract (which also asks whether the
+  diff stayed inside the agreed scope). Only blocking findings get an adversarial refuter, and only the
+  lens that raised one is re-run after a fix.
 - **A dispatched session has to prove it started.** `claude --background` returns an id immediately
   and the session can still die on its first turn; without a start marker, four dead dispatches once
   read as four successes.

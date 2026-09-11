@@ -3,7 +3,7 @@
 // This exists because of a real, measured failure. The rule "Never spawn a subagent to work a Linear
 // issue" was written to stop a session from spawning a local agent INSTEAD of delegating a separate
 // issue — work that then dies with the conversation, leaving no trail on the board. A dispatched
-// session working an issue read it as a blanket ban and skipped the auditor and all four review
+// session working an issue read it as a blanket ban and skipped the auditor and every review
 // lenses, reporting: "treat the review as self-performed, not independent."
 //
 // Every PR the harness has produced to date carries that caveat. So the single most valuable thing
@@ -88,17 +88,17 @@ await t('the task skill states that a run without review lenses is incomplete', 
     'the skill does not require a run to declare when review was NOT independent');
 });
 
-await t('the workflow still dispatches four review lenses', async () => {
+await t('the workflow still dispatches all three review lenses', async () => {
   // Guards the other direction: a "fix" that removed the lenses would satisfy the wording tests.
   //
   // Asserted by RUNNING the workflow, not by grepping it. A substring search for 'bugs' passed with
   // DIMENSIONS emptied out, because those words appear elsewhere in a 1600-line file — so the
-  // assertion could not tell "four lenses are dispatched" from "the word is present".
+  // assertion could not tell "the lenses are dispatched" from "the word is present".
   const { calls } = await run({ args: { task: 'ABC-1 do a thing', cwd: '/tmp' }, responder: makeResponder({
     auditDirty: [false], verifyGreen: [true], reviewApproved: [true],
   }) });
   const lenses = calls.filter((c) => c.startsWith('review:')).map((c) => c.slice('review:'.length));
-  assert.deepStrictEqual(lenses.sort(), ['bugs', 'contract', 'scope-creep', 'test-gaps'],
+  assert.deepStrictEqual(lenses.sort(), ['bugs', 'contract', 'test-gaps'],
     `the run dispatched these review lenses: ${JSON.stringify(lenses)}`);
 });
 

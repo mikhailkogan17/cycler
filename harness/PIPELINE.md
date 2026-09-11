@@ -63,11 +63,12 @@ See `ROUTING.md` for the full table.
 | 5 | Verify | 1 | inherit | Plans and runs the gate. Red → back to 3. |
 | 6 | Commit | 1 | `haiku` | Stages only the contract's files |
 | 7 | PR | 1 | `haiku` | `gh pr create`. Never merges. |
-| 8 | Review | 4 + N + 1 | mixed | 4 lenses parallel → 1 refuter per blocking finding (cap 12) → synthesis. Blocking → back to 3. Max 2 rounds. |
+| 8 | Review | 3 + N + 1 | mixed | 3 lenses parallel → 1 refuter per blocking finding (cap 12) → synthesis. Blocking → back to 3. Max 2 rounds. |
 | 9 | Follow-ups | 1 | `haiku` | Triages the contract's `## Follow-ups`, files survivors to Linear **Triage** |
 | 10 | Cleanup | 1 | `haiku` | Releases the lock, removes the worktree on a clean finish |
 
-Lenses: `bugs`, `scope-creep`, `test-gaps`, `contract`. Ceiling ~60 agents.
+Lenses: `bugs`, `test-gaps`, `contract` (which carries scope: APL-79 merged the old `scope-creep`
+lens into it, since both asked "is this inside what was agreed?"). Ceiling ~60 agents.
 
 `verify`, `audit` and `refute` are deliberately **not** downgraded — a weak refuter defaults to
 "not real" and silently drops findings, which is worse than not refuting at all.

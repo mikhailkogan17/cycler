@@ -53,7 +53,7 @@ assertion — it would pass on a prompt that dropped the warning entirely.
 
 | # | Assertion | Test |
 |---|---|---|
-| 4.1 | Round 1 runs all four lenses over the full branch diff | `test-apl42.mjs` |
+| 4.1 | Round 1 runs every lens over the full branch diff | `test-apl42.mjs` |
 | 4.2 | Later rounds re-run only lenses that raised a blocking finding | `test-apl42.mjs` |
 | 4.3 | Only blocking findings get a refuter | `test-refute-blocking-only.mjs` |
 | 4.4 | A review of only nits spawns no refuters | `test-refute-blocking-only.mjs` |

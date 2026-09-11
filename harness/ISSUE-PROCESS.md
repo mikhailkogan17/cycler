@@ -198,13 +198,13 @@ nothing from you:
 - **test-gaps** — the diff adds logic that nothing tests. Mechanical enough to run on Haiku:
   `Task(..., model: "haiku")`. It is looking for uncovered branches, not exercising judgement.
 
-- **scope-creep** — edits outside the contract's scope, unrelated changes, dead code,
+- **scope** (inside the contract lens since APL-79) — edits outside the contract's scope, unrelated changes, dead code,
   over-engineering. `audit.sh` already computes the file-count and forbidden-path half mechanically,
   so this lens is for the half a number cannot see: a change that stays inside Allowed paths and
   still does more than the contract asked for.
 
-This file used to claim "there is no scope-creep lens". That was false — `task-orchestration.js:1062`
-defines one and round 1 dispatches all four. It is the second doc-vs-code contradiction found in one
+This file used to claim "there is no scope-creep review". That was false — the workflow asks the
+question in every round (as its own lens until APL-79, inside the contract lens since). It is the second doc-vs-code contradiction found in one
 session, after this repo's gate doc claiming the gate never tested Swift. Both understated what runs,
 which is the dangerous direction: prose describing a script is a *claim* about the script, and
 nothing checks it.

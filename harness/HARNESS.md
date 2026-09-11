@@ -31,7 +31,7 @@ contract → implement → audit → verify → commit → PR → review
 | Verify | gate planner → check runners (parallel, long xcodebuild isolated) → reporter | final-gate report (pre-commit) |
 | Commit | committer | commit + push of contract-listed files; skipped on `noCommit` |
 | PR | pr-opener | `gh pr create --base <prBase>` (default `main`); never merges |
-| Review | 4 lenses (bugs / scope-creep / test-gaps / contract) → adversarial refuters → synthesis | blocking issues → Implement (fixes pushed to the PR) or APPROVED |
+| Review | 3 lenses (bugs / test-gaps / contract, which also carries scope) → adversarial refuters → synthesis | blocking issues → Implement (fixes pushed to the PR) or APPROVED |
 
 ## Self-correcting loop
 
@@ -49,7 +49,7 @@ left and returned `blocked` on the review loop's first iteration. Each loop now 
 (audit / verify / review — there is never a `repair` stage) only if the cap is exhausted
 (`roundsExhausted: true` + `lastFailure`), or the implementer/contract stage failed. `fixLog` records every
 fix round (stage, issues, fix summary). Review-fix rounds skip the heavy verify gate; the review's
-contract/scope-creep lenses cover compliance.
+the contract lens covers compliance and scope.
 
 ## Rules
 
@@ -344,23 +344,24 @@ change, or the next unattended run hangs on it.
 
 ## Review narrowing on fix rounds (APL-42)
 
-Review was the largest stage in the run — all four lenses re-read the whole branch diff every round. On
+Review was the largest stage in the run — every lens re-read the whole branch diff every round. On
 rounds after the first:
 
 - **Scope** — each lens reads the *fix* diff (`<last reviewed commit>..HEAD`), not the branch diff. The
   fix is where a regression would come from, so this concentrates attention. Lenses keep full repo access
   and are told to open surrounding code when a changed line implicates it.
 - **Lens selection** — re-run every lens that had findings last round, plus `bugs` and `contract` always.
-  Those two are the lenses whose miss ships a defect rather than a style problem. When `scope-creep` /
-  `test-gaps` are skipped, the contract lens is explicitly given their duty over the fix diff.
+  Those two are the lenses whose miss ships a defect rather than a style problem — and since APL-79
+  `contract` also carries scope, so the always-run pair covers three of the old four questions. When
+  `test-gaps` is skipped, the contract lens is explicitly given its duty over the fix diff.
 
 Every narrowing is reported: `reviewCoverage` in the result (one entry per round — lenses run, lenses
 skipped, diff scope, reason), a note appended to the review notes, and a `log()` line. The synthesizer is
-told what was not re-examined so its verdict cannot read as a fresh four-lens review. Without a commit
+told what was not re-examined so its verdict cannot read as a fresh full-lens review. Without a commit
 hash to scope from, the round falls back to the full branch diff and says so.
 
-This makes the typical run cheaper (4 lenses/round → 2), not the worst case: when every lens is live, all
-four still run.
+This makes the typical run cheaper (3 lenses/round → 2), not the worst case: when every lens is live, all
+three still run.
 
 ## Tracker-driven tasks (APL-35)
 

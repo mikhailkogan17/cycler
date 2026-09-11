@@ -19,10 +19,10 @@ async function reviewRun(plan, args = {}) {
   return { result, calls, logs, prompts, lensCalls: calls.filter((c) => c.startsWith('review:')) }
 }
 
-await t('round 1 runs all four lenses over the full branch diff', async () => {
+await t('round 1 runs every lens over the full branch diff', async () => {
   const { result, lensCalls, prompts } = await reviewRun({ ...clean, reviewApproved: [true] })
   assert.strictEqual(result.status, 'done')
-  assert.strictEqual(lensCalls.length, 4)
+  assert.strictEqual(lensCalls.length, 3)
   assert.strictEqual(result.reviewCoverage.length, 1)
   assert.deepStrictEqual(result.reviewCoverage[0].lensesSkipped, [])
   assert.match(prompts['review:bugs'][0], /git diff main\.\.\.HEAD/)
@@ -31,32 +31,33 @@ await t('round 1 runs all four lenses over the full branch diff', async () => {
 await t('a fix round re-runs only the live lenses plus the always-run pair', async () => {
   const { result, lensCalls } = await reviewRun({
     ...clean,
-    // Only scope-creep is clean in round 1; test-gaps had a finding, so it stays live.
-    lensFindings: { bugs: [[finding()]], 'test-gaps': [[finding('b.ts')]], contract: [[]], 'scope-creep': [[]] },
+    // Only test-gaps is clean in round 1 — it is also the only skippable lens, so it is the
+    // one thing that can be dropped and the only thing round 2 must say it dropped.
+    lensFindings: { bugs: [[finding()]], contract: [[finding('b.ts')]], 'test-gaps': [[]] },
     reviewApproved: [false, true],
   })
   assert.strictEqual(result.status, 'done')
-  // 4 in round 1, then bugs + contract (always) + test-gaps (live) = 3
-  assert.strictEqual(lensCalls.length, 7)
+  // 3 in round 1, then bugs + contract (always) = 2
+  assert.strictEqual(lensCalls.length, 5)
   const r2 = result.reviewCoverage[1]
-  assert.deepStrictEqual(r2.lensesRun.sort(), ['bugs', 'contract', 'test-gaps'])
-  assert.deepStrictEqual(r2.lensesSkipped, ['scope-creep'])
+  assert.deepStrictEqual(r2.lensesRun.sort(), ['bugs', 'contract'])
+  assert.deepStrictEqual(r2.lensesSkipped, ['test-gaps'])
 })
 
 await t('when every lens was clean, a fix round still re-runs bugs + contract', async () => {
   const { result, lensCalls } = await reviewRun({ ...clean, reviewApproved: [false, true] })
-  assert.strictEqual(lensCalls.length, 6, 'expected 4 + 2, got ' + lensCalls.length)
+  assert.strictEqual(lensCalls.length, 5, 'expected 3 + 2, got ' + lensCalls.length)
   assert.deepStrictEqual(result.reviewCoverage[1].lensesRun, ['bugs', 'contract'])
-  assert.deepStrictEqual(result.reviewCoverage[1].lensesSkipped.sort(), ['scope-creep', 'test-gaps'])
+  assert.deepStrictEqual(result.reviewCoverage[1].lensesSkipped.sort(), ['test-gaps'])
 })
 
-await t('lens agents scale sub-linearly: 3 rounds cost 8, not 12', async () => {
+await t('lens agents scale sub-linearly: 3 rounds cost 7, not 9', async () => {
   const { result, lensCalls } = await reviewRun(
     { ...clean, reviewApproved: [false, false, true] },
     { fixMax: 3 }
   )
   assert.strictEqual(result.status, 'done')
-  assert.strictEqual(lensCalls.length, 8)
+  assert.strictEqual(lensCalls.length, 7)
   assert.strictEqual(result.reviewCoverage.length, 3)
 })
 
@@ -69,11 +70,11 @@ await t('a fix round is scoped to the fix diff, not the whole branch', async () 
   assert.match(result.reviewCoverage[1].diffScope, /fix diff only/)
 })
 
-await t('the contract lens picks up scope + coverage duty when those lenses are skipped', async () => {
+await t('the contract lens carries scope every round, and coverage duty when test-gaps is skipped', async () => {
   const { prompts } = await reviewRun({ ...clean, reviewApproved: [false, true] })
-  const contractRound2 = prompts['review:contract'][1]
-  assert.match(contractRound2, /outside the contract's Allowed paths/)
-  assert.match(contractRound2, /nothing tests/)
+  assert.match(prompts['review:contract'][0], /outside the contract's Allowed paths/,
+    'round 1 contract lens does not carry the scope question the scope-creep lens used to ask')
+  assert.match(prompts['review:contract'][1], /nothing tests/)
 })
 
 await t('a regression introduced by a fix round is still caught', async () => {
@@ -92,14 +93,14 @@ await t('nothing skipped is silent — log, notes and reviewCoverage all say so'
   const { result, logs } = await reviewRun({ ...clean, reviewApproved: [false, true] })
   assert.ok(logs.some((l) => l.includes('APL-42') && l.includes('NOT re-run')), 'expected an APL-42 log line')
   assert.match(result.notes, /APL-42 narrowing/)
-  assert.match(result.notes, /scope-creep/)
+  assert.match(result.notes, /test-gaps/)
   assert.ok(result.reviewCoverage.every((c) => c.reason))
 })
 
 await t('the synthesizer is told what was not re-examined', async () => {
   const { prompts } = await reviewRun({ ...clean, reviewApproved: [false, true] })
   assert.match(prompts.synthesis[1], /NOT re-run this round/)
-  assert.match(prompts.synthesis[1], /nobody reads this verdict as a fresh four-lens review/)
+  assert.match(prompts.synthesis[1], /nobody reads this verdict as a fresh full-lens review/)
 })
 
 await t('a missing commit hash falls back to the full branch diff and says so', async () => {

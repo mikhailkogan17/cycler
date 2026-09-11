@@ -29,7 +29,7 @@
 // Review fix rounds are narrowed (APL-42): later rounds re-run only the live lenses, over the fix diff.
 // Anything not re-examined is named in the result's reviewCoverage — never silent.
 // Worst case per run = 1 contract + 1 branch + gateFixMax+1 x (implement + audit + verify)
-//   + (reviewFixMax+1) x (4 lenses + MAX_REFUTERS_PER_ROUND + 1 synthesis)
+//   + (reviewFixMax+1) x (3 lenses + MAX_REFUTERS_PER_ROUND + 1 synthesis)
 //   + reviewFixMax x (implement + commit) + 1 commit + 1 PR.
 // With the defaults (gateFixMax = reviewFixMax = 2) that ceiling is ~70 agents. APL-42 lowers the TYPICAL
 // lens count (4 per round -> 2), not that ceiling. Anything dropped by a cap is log()'d and
@@ -65,7 +65,7 @@ export const meta = {
     { title: 'Verify', detail: 'single gate agent: plans, runs checks in parallel, reports' },
     { title: 'Commit', detail: 'commit + push the gated diff' },
     { title: 'PR', detail: 'open a pull request to the base branch (never merge)' },
-    { title: 'Review', detail: '4 lenses, adversarial refute, synthesis (post-commit)' },
+    { title: 'Review', detail: '3 lenses, adversarial refute, synthesis (post-commit)' },
     { title: 'Follow-ups', detail: 'triage the contract follow-ups and file the survivors in Linear' },
     { title: 'Cleanup', detail: 'release the shared-tree lock; remove the worktree on a clean finish' },
   ],
@@ -1098,7 +1098,7 @@ Honesty is the whole point of this stage.`,
 }
 
 // APL-42: Review was the largest stage by a wide margin — 8 of 23 agents on the measured APL-40 run,
-// because all four lenses re-read the entire branch diff from scratch on every fix round, with no memory
+// because every lens re-reads the entire branch diff from scratch on every fix round, with no memory
 // of what they had already cleared. Two composed narrowings, both reported, never silent:
 //
 //   1. SCOPE (rounds >= 2): each lens reads the FIX diff (<last reviewed commit>..HEAD) instead of the
@@ -1112,15 +1112,16 @@ Honesty is the whole point of this stage.`,
 //
 // Why 'bugs' and 'contract' are the always-run pair: they are the two lenses whose miss ships a defect
 // rather than a style problem — a fix is the single most likely source of a new bug, and the fix must
-// still satisfy the contract's acceptance checks and touch no forbidden path. 'scope-creep' and
-// 'test-gaps' are skippable when they were clean, and their substance is not dropped: on later rounds the
-// contract lens is explicitly told to flag files outside the contract's Allowed paths and untested new
-// logic in the fix diff. It is a weaker check than an independent lens, which is exactly why every skip
+// still satisfy the contract's acceptance checks and touch no forbidden path — and since APL-79 the
+// contract lens carries scope as well, so the pair also covers edits outside the agreed paths every
+// round. 'test-gaps' is skippable when it was clean, and its substance is not dropped: on later rounds
+// the contract lens is explicitly told to flag untested new logic in the fix diff. It is a weaker check
+// than an independent lens, which is exactly why every skip
 // is named in reviewCoverage, in the notes, and in the log — a review that examined less than it appears
 // to is the failure this harness keeps re-learning (APL-7, APL-8, APL-39).
 //
-// Honest limit: this makes the TYPICAL run cheaper (4 lenses/round -> 2), not the worst case. When every
-// lens is live, all four still run — which is the correct answer in that case.
+// Honest limit: this makes the TYPICAL run cheaper (3 lenses/round -> 2), not the worst case. When every
+// lens is live, all three still run — which is the correct answer in that case.
 const ALWAYS_RERUN_LENSES = ['bugs', 'contract']
 
 // One entry per review round: what was examined, what was not, and why. Returned in the result.
@@ -1130,9 +1131,14 @@ async function runReview(reviewRound, sinceCommit, liveLenses) {
   phase('Review')
   const DIMENSIONS = [
     { key: 'bugs', prompt: 'Hunt for REAL bugs and logic errors in the diff. Only report issues you can point to a concrete line for.' },
-    { key: 'scope-creep', prompt: 'Check for edits outside the contract scope, unrelated changes, dead code, or over-engineering.' },
     { key: 'test-gaps', prompt: 'Check whether the changes are covered by tests that would actually fail on regression. Note missing coverage that matters.' },
-    { key: 'contract', prompt: 'Check every contract acceptance check against the diff and working tree. Flag any check not actually satisfied, and any forbidden path touched.' },
+    // APL-79: 'contract' and the old 'scope-creep' lens were one question asked twice — "is this inside
+    // what was agreed?" — so they are one lens now. Not a coverage cut: both prompts are here verbatim,
+    // and the code already conceded the overlap, because whenever scope-creep was skipped on a later
+    // round its substance was pasted into this lens's prompt anyway (see the `scoped` block below).
+    // One agent per round saved, in every round, and no dimension goes unexamined.
+    { key: 'contract', prompt: `Check every contract acceptance check against the diff and working tree. Flag any check not actually satisfied, and any forbidden path touched.
+Also check scope: edits outside the contract's Allowed paths, changes unrelated to the task, dead code, or over-engineering. Both halves are blocking — a diff that satisfies every acceptance check by doing four other things as well has not satisfied the contract.` },
   ]
   const firstRound = reviewRound === 1
   // Scope narrowing only applies when we actually know where the previous review stopped. Without a
@@ -1174,9 +1180,8 @@ the fix introduces is exactly what this round exists to catch. You still have fu
 changed line implicates surrounding or calling code, OPEN IT and check the interaction. Do not report
 issues in unchanged code that this fix did not affect.
 ` : ''}${d.prompt}
-${scoped && d.key === 'contract' ? `Additionally this round (the scope-creep and test-gaps lenses may not be
-re-running): flag any file in this fix diff that falls outside the contract's Allowed paths, any change
-unrelated to the blocking issues being fixed, and any new logic in the fix that nothing tests.
+${scoped && d.key === 'contract' ? `Additionally this round (the test-gaps lens may not be re-running):
+flag any new logic in the fix that nothing tests.
 ` : ''}You have NO context from the implementer — judge only what you see in the diff and the contract.
 Report concrete findings (file + line + what breaks). Report nothing if clean.`,
         { schema: FINDINGS_SCHEMA, label: `review:${d.key}`, phase: 'Review', model: modelFor(`review:${d.key}`) }
@@ -1256,7 +1261,7 @@ a reason saying you could not read the file, so a real finding is never dropped 
     `You are the REVIEW SYNTHESIZER. Task contract: ${contract}. Repo: ${runCwd}.
 This is review round ${reviewRound}. Lenses run this round: ${coverage.lensesRun.join(', ')}.${skipped.length
       ? ` NOT re-run this round (they were clean on the previous, larger diff): ${skipped.join(', ')} — say so in
-notes, so nobody reads this verdict as a fresh four-lens review.` : ''}
+notes, so nobody reads this verdict as a fresh full-lens review.` : ''}
 Diff examined: ${coverage.diffScope}.
 Review findings. A [blocking] entry survived an adversarial refuter that tried to disprove it. A
 [non-blocking, UNREFUTED] entry did NOT: only blocking findings are refuted, because a nit costs an
