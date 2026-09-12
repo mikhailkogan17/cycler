@@ -609,6 +609,25 @@ function findSessionByKey(identifier, read = defaultAgentsRead) {
   return hit && hit.id ? String(hit.id) : null;
 }
 
+// The id of a session that is ALREADY working this issue, if there is one.
+//
+// A session the usage limit stops is not dead. It resumes on its own when the window reopens — and
+// the poller's cooldown expires at the same moment, so both the resumed session and a fresh dispatch
+// start on the same branch within the same second. That happened to APL-84 on 2026-09-12: e416007a
+// resumed at 12:00:40 and 9f2a405e was dispatched at 12:01:26, two runs in one worktree.
+//
+// max_concurrent cannot catch this. It reads the registry once at the top of a poll, and at that
+// instant the resuming session had not yet flipped to `working`. So the invariant is enforced here
+// instead, per issue, immediately before spawning: one issue, one session, checked as late as
+// possible rather than inferred from a count taken earlier.
+function liveSessionFor(identifier, read = defaultAgentsRead) {
+  const list = readAgents(read);
+  if (list === null) return null;
+  const prefix = `[${identifier}]`;
+  const hit = list.find((a) => a && String(a.name || '').startsWith(prefix) && isWorking(a));
+  return hit && hit.id ? String(hit.id) : null;
+}
+
 function isWorking(a) {
   const state = agentState(a);
   return state !== '' && !AGENT_IDLE_STATES.has(state);
@@ -893,6 +912,14 @@ async function poll() {
       log(`skipping ${issue.identifier} — blocked by ${blockerKeys(issue).join(', ')}`);
       continue;
     }
+    // Last line of defence against two runs on one branch, and the only one that catches a session
+    // resuming from a usage limit at the same moment its cooldown lifts. Not marked processed: if
+    // that session then fails, the issue is still eligible on a later poll.
+    const already = liveSessionFor(issue.identifier);
+    if (already) {
+      log(`skipping ${issue.identifier} — session ${already} is already working it`);
+      continue;
+    }
     try {
       // Inside the try on purpose. Thrown from out here it escaped poll() entirely, so a mistyped
       // repo.path aborted the whole poll before the failure comment below and every delegated issue
@@ -935,7 +962,8 @@ async function poll() {
 // and it is only checkable if it can be called.
 export { workflowFor, buildDispatchArgv, splitCommand, DEFAULT_DISPATCH, dispatchBudget, readClaudeExpiry,
   countRunningSessions, concurrencySlots, busySessionIds, parseLimitReset, cooldownRemaining,
-  agentState, isWorking, findSessionByKey, requeueAfterLimit, isBlocked, blockerKeys };
+  agentState, isWorking, findSessionByKey, liveSessionFor, requeueAfterLimit, isBlocked,
+  blockerKeys };
 
 // Run only when executed directly, not when imported.
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
