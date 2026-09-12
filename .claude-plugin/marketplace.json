@@ -4,12 +4,12 @@
     "name": "Mikhail Kogan"
   },
   "description": "Marketplace for the cycler plugin — the Linear to Claude Code loop, run entirely on your own machine.",
-  "version": "0.2.10",
+  "version": "0.2.11",
   "plugins": [
     {
       "name": "cycler",
       "description": "Delegate a Linear issue to Claude and get a gated PR back. A local poller dispatches a background Claude Code session; a contract-first harness implements, gates, opens the PR and reports on the issue. No webhook, no tunnel, no cloud.",
-      "version": "0.2.10",
+      "version": "0.2.11",
       "author": {
         "name": "Mikhail Kogan"
       },

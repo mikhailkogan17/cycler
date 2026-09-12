@@ -49,6 +49,8 @@ const PENDING_PATH = join(DIR, 'pending.json');
 const RUNNING_PATH = join(DIR, 'running.json');
 // When the account's usage window is known to be spent, and why.
 const COOLDOWN_PATH = join(DIR, 'cooldown.json');
+// Sessions the usage limit killed, parked until the window reopens. See resumeAfterLimit().
+const RESUME_PATH = join(DIR, 'resume.json');
 
 const REDIRECT_URI = 'http://localhost:8787/callback';
 const SCOPES = 'read,write,app:assignable,app:mentionable';
@@ -797,34 +799,117 @@ function reviewRunning(readLogs = defaultLogsRead, busyIds = null) {
   return { state, limited };
 }
 
-// A session the usage limit killed did not finish its issue, so the issue must go back in the queue.
-// It is still in processed.json — dispatch() put it there and nothing takes it out — so without this
-// the cooldown expires onto an empty queue and the work is simply dropped, which is what happened to
-// APL-79 and APL-67.
+// A session the usage limit killed did not finish its issue — but it is NOT dead. It holds the whole
+// run: the contract, the branch, the worktree, the audit findings, everything it had done when the
+// window closed. Re-dispatching throws all of that away and starts the issue from zero, and worse,
+// the killed session resumes ITSELF when the window reopens, so a fresh dispatch means two runs on
+// one branch. APL-84 is the recorded case: session e416007a died at 08:23, a NEW session 9f2a405e
+// was dispatched at 12:01:26 when the cooldown expired, and e416007a came back six minutes later.
 //
-// Attempts still count. An issue that hits the limit on every attempt would otherwise re-dispatch
-// forever, burning each new window on the same run and never reaching the retry ceiling that exists
-// for exactly this.
-function requeueAfterLimit(limited) {
-  const processed = new Set(loadJson(STATE_PATH, []));
-  const requeued = [];
+// So nothing is requeued. The record is parked in resume.json and, once the window reopens,
+// resumeAfterLimit() continues THAT session in place. The issue stays in processed.json throughout,
+// which is what stops the normal dispatch path from racing the resume.
+//
+// Attempts still count. An issue that hits the limit on every attempt would otherwise resume forever,
+// burning each new window on the same run and never reaching the retry ceiling that exists for it.
+function parkForResume(limited, until) {
+  const parked = loadJson(RESUME_PATH, []);
+  const added = [];
   for (const rec of limited) {
-    if (!rec.issueId) {
-      logErr(`${rec.identifier} was killed by the usage limit but its watch record has no issue id — `
-        + `it cannot be requeued automatically; remove it from ~/.cycler/processed.json by hand`);
+    if (!rec.session) {
+      logErr(`${rec.identifier} was killed by the usage limit but its watch record has no session id — `
+        + `it cannot be resumed automatically; re-run it by hand`);
       continue;
     }
     const attempts = rec.attempts || 1;
     if (attempts >= MAX_DISPATCH_ATTEMPTS) {
-      logErr(`${rec.identifier} has been killed by the usage limit ${attempts} times — not requeuing`);
+      logErr(`${rec.identifier} has been killed by the usage limit ${attempts} times — not resuming`);
       continue;
     }
-    processed.delete(rec.issueId);
-    carryAttempts.set(rec.issueId, attempts + 1);
-    requeued.push(rec);
+    const next = {
+      session: rec.session,
+      issueId: rec.issueId,
+      identifier: rec.identifier,
+      workflow: rec.workflow,
+      attempts: attempts + 1,
+      until,
+      at: Date.now(),
+    };
+    const at = parked.findIndex((r) => r.session === rec.session);
+    if (at >= 0) parked[at] = next; else parked.push(next);
+    added.push(next);
   }
-  if (requeued.length) writeFileSync(STATE_PATH, JSON.stringify([...processed], null, 2));
-  return requeued;
+  if (added.length) writeFileSync(RESUME_PATH, JSON.stringify(parked, null, 2));
+  return added;
+}
+
+// Once the window has reopened, continue each parked session where it stopped.
+//
+// `claude --background --resume <id>` continues that session under the same id. The one case it does
+// something else is when the session is ALREADY running — then it starts a copy, which is exactly the
+// duplicate this whole mechanism exists to prevent. A limit-killed session often restores itself at
+// the reset, so that case is common rather than exotic: when the registry says the session is working
+// again, the resume is skipped and the record retired, because the session is already doing the thing
+// the resume would have asked for.
+//
+// Records survive a failed resume: they stay in resume.json and the next poll tries again, up to the
+// attempt ceiling parkForResume() already applied.
+function resumeAfterLimit(runResume = defaultResume, read = defaultAgentsRead) {
+  const parked = loadJson(RESUME_PATH, []);
+  if (!parked.length) return { resumed: [], selfRestored: [] };
+  const keep = [];
+  const resumed = [];
+  const selfRestored = [];
+  for (const rec of parked) {
+    const live = liveSessionFor(rec.identifier, read);
+    if (live) {
+      log(`${rec.identifier} — session ${live} came back on its own after the reset; not resuming`);
+      selfRestored.push(rec);
+      continue;
+    }
+    try {
+      runResume(rec.session, resumePrompt(rec));
+      log(`resumed ${rec.identifier} session=${rec.session} after the usage window reset `
+        + `(attempt ${rec.attempts} of ${MAX_DISPATCH_ATTEMPTS})`);
+      resumed.push(rec);
+    } catch (err) {
+      logErr(`could not resume ${rec.identifier} session ${rec.session}: ${err.message} — retrying next poll`);
+      keep.push(rec);
+    }
+  }
+  writeFileSync(RESUME_PATH, JSON.stringify(keep, null, 2));
+  // A resumed session has to be watched again: the window it just re-entered can run out too.
+  if (resumed.length) {
+    const watched = loadJson(RUNNING_PATH, []);
+    for (const rec of resumed) {
+      if (watched.some((r) => r.session === rec.session)) continue;
+      watched.push({
+        session: rec.session,
+        issueId: rec.issueId,
+        identifier: rec.identifier,
+        workflow: rec.workflow,
+        attempts: rec.attempts,
+        at: Date.now(),
+      });
+    }
+    writeFileSync(RUNNING_PATH, JSON.stringify(watched, null, 2));
+  }
+  return { resumed, selfRestored };
+}
+
+// What the resumed session is told. It has its own transcript, so this says what CHANGED — the window
+// is open again — and not what the task is.
+function resumePrompt(rec) {
+  return `The account's Claude usage window has reset, so you can continue. You were working `
+    + `${rec.identifier} via ${rec.workflow || 'its workflow'} and were stopped mid-run by the usage `
+    + `limit. Pick up exactly where you left off: re-read your contract and the workflow's stage list, `
+    + `work out which stage you had reached, and carry on from there. Do not start over and do not `
+    + `create a second branch or worktree.`;
+}
+
+function defaultResume(session, prompt) {
+  return execFileSync(CLAUDE_BIN, ['--background', '--resume', session, prompt],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30_000 });
 }
 
 // issueId -> the attempt number the NEXT dispatch of it represents. Lives for one poll: it is the
@@ -866,7 +951,7 @@ async function poll() {
   const review = reviewRunning(defaultLogsRead, busySessionIds());
   if (review.limited.length) {
     const resumesAt = new Date(review.state.until);
-    for (const rec of requeueAfterLimit(review.limited)) {
+    for (const rec of parkForResume(review.limited, review.state.until)) {
       // Say it on the ISSUE, not only in a log file nobody opens. A run that vanishes because the
       // account's window ran out is indistinguishable on the board from one that was never picked
       // up, and that ambiguity is the whole reason every other outcome here posts a comment.
@@ -874,24 +959,52 @@ async function poll() {
         await comment(
           rec.issueId,
           `⏸️ **Paused — Claude usage limit reached.**\n\n`
-            + `The session working this issue (\`${rec.session}\`) was killed when the account's `
-            + `5-hour window ran out. Nothing was lost that a re-run cannot redo, but the work is `
-            + `**not finished**.\n\n`
-            + `The poller has put this issue back in its queue and is holding every dispatch until `
-            + `**${resumesAt.toISOString()}**, when the window resets. It will re-dispatch `
-            + `automatically then — no action needed.\n\n`
-            + `Attempt ${(rec.attempts || 1) + 1} of ${MAX_DISPATCH_ATTEMPTS}.`
+            + `The session working this issue (\`${rec.session}\`) was stopped when the account's `
+            + `5-hour window ran out. Nothing is lost: the session still holds the run.\n\n`
+            + `The poller is holding every dispatch until **${resumesAt.toISOString()}**, when the `
+            + `window resets, and will then **resume this same session** — not start a new one — so `
+            + `the work continues where it stopped. No action needed.\n\n`
+            + `Attempt ${rec.attempts} of ${MAX_DISPATCH_ATTEMPTS}.`
         );
       } catch (err) {
         logErr(`could not tell ${rec.identifier} it was paused on the usage limit: ${err.message}`);
       }
-      log(`${rec.identifier} requeued — re-dispatches after the usage window resets at ${resumesAt.toISOString()}`);
+      log(`${rec.identifier} parked — session ${rec.session} resumes after the usage window resets `
+        + `at ${resumesAt.toISOString()}`);
     }
   }
   const cooling = cooldownRemaining(loadJson(COOLDOWN_PATH, null));
   if (cooling > 0) {
     log(`holding off: a dispatched session ended on the account usage limit — nothing goes out for `
       + `another ${Math.ceil(cooling / 60_000)} min, when the window resets`);
+  }
+  if (cooling === 0) {
+    // The window is open again. Parked sessions go first: they are half-finished runs, and resuming
+    // one costs less than the fresh dispatch that would otherwise take the same slot.
+    const { resumed, selfRestored } = resumeAfterLimit();
+    for (const rec of resumed) {
+      try {
+        await comment(
+          rec.issueId,
+          `▶️ **Resumed.** The usage window reset, so session \`${rec.session}\` was continued in `
+            + `place — same session, same branch, same worktree — rather than re-dispatched.\n\n`
+            + `Attempt ${rec.attempts} of ${MAX_DISPATCH_ATTEMPTS}.`
+        );
+      } catch (err) {
+        logErr(`resumed ${rec.identifier} but could not comment: ${err.message}`);
+      }
+    }
+    for (const rec of selfRestored) {
+      try {
+        await comment(
+          rec.issueId,
+          `▶️ **Running again.** Session \`${rec.session}\` restored itself when the usage window `
+            + `reset, so the poller left it alone rather than starting a second run.`
+        );
+      } catch (err) {
+        logErr(`${rec.identifier} self-restored but could not comment: ${err.message}`);
+      }
+    }
   }
   const slots = cooling > 0 ? 0 : concurrencySlots(running);
   if (slots === 0) {
@@ -962,7 +1075,7 @@ async function poll() {
 // and it is only checkable if it can be called.
 export { workflowFor, buildDispatchArgv, splitCommand, DEFAULT_DISPATCH, dispatchBudget, readClaudeExpiry,
   countRunningSessions, concurrencySlots, busySessionIds, parseLimitReset, cooldownRemaining,
-  agentState, isWorking, findSessionByKey, liveSessionFor, requeueAfterLimit, isBlocked,
+  agentState, isWorking, findSessionByKey, liveSessionFor, parkForResume, resumeAfterLimit, resumePrompt, isBlocked,
   blockerKeys };
 
 // Run only when executed directly, not when imported.

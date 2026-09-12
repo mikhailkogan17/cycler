@@ -16,14 +16,15 @@ import assert from 'node:assert';
 import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-// requeueAfterLimit() WRITES processed.json, so the state dir is redirected before the module is
-// imported — DIR is resolved once at module load. Without this the suite would edit the real
-// ~/.cycler and a test run could re-dispatch live issues.
+// parkForResume() and resumeAfterLimit() WRITE state files, so the state dir is redirected before
+// the module is imported — DIR is resolved once at module load. Without this the suite would edit
+// the real ~/.cycler and a test run could disturb live sessions.
 const DIR = mkdtempSync(join(tmpdir(), 'cycler-cooldown-'));
 process.env.CYCLER_HOME = DIR;
 
 const POLLER = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'poller', 'poller.mjs');
-const { parseLimitReset, cooldownRemaining, busySessionIds, requeueAfterLimit } =
+const { parseLimitReset, cooldownRemaining, busySessionIds, parkForResume, resumeAfterLimit,
+  resumePrompt } =
   await import(POLLER + '?cool=1');
 assert.notStrictEqual(DIR, join(process.env.HOME || '', '.cycler'), 'the test is writing to the real state dir');
 
@@ -127,48 +128,95 @@ t('the watch record carries issueId — without it a limited run cannot be reque
   assert.match(push[0], /attempts:/, 'the watch record loses the attempt count, so the retry ceiling never applies');
 });
 
-t('a limited session is REQUEUED — the issue comes back out of processed.json', () => {
+t('a limited session is PARKED for resume — the issue stays processed so nothing re-dispatches it', () => {
   const issueId = 'f10abda2-5d35-41d2-b800-e3681cdcec48';
   writeFileSync(join(DIR, 'processed.json'), JSON.stringify([issueId, 'other-issue']));
-  const out = requeueAfterLimit([{ issueId, identifier: 'APL-79', session: 'a472f353', attempts: 1 }]);
-  assert.strictEqual(out.length, 1, 'the record was not requeued');
+  writeFileSync(join(DIR, 'resume.json'), '[]');
+  const out = parkForResume([{ issueId, identifier: 'APL-79', session: 'a472f353', workflow: '/w', attempts: 1 }], 123);
+  assert.strictEqual(out.length, 1, 'the record was not parked');
+  assert.strictEqual(out[0].attempts, 2, 'the attempt count did not advance');
   const processed = JSON.parse(readFileSync(join(DIR, 'processed.json'), 'utf8'));
-  assert.ok(!processed.includes(issueId), 'the issue is still processed, so it will never re-dispatch');
-  assert.ok(processed.includes('other-issue'), 'requeuing one issue wiped an unrelated one');
+  assert.ok(processed.includes(issueId),
+    'the issue was un-processed, so the normal dispatch path will start a SECOND run on it — the APL-84 bug');
+  const parked = JSON.parse(readFileSync(join(DIR, 'resume.json'), 'utf8'));
+  assert.strictEqual(parked[0].session, 'a472f353', 'the session id was not kept, so nothing can be resumed');
 });
 
 t('the retry ceiling still applies — an issue that hits the limit every time does not loop forever', () => {
-  const issueId = 'aaaa1111-0000-0000-0000-000000000000';
-  writeFileSync(join(DIR, 'processed.json'), JSON.stringify([issueId]));
-  const out = requeueAfterLimit([{ issueId, identifier: 'APL-1', session: 'x', attempts: 3 }]);
-  assert.strictEqual(out.length, 0, 'an issue past the attempt ceiling was requeued anyway');
-  assert.ok(JSON.parse(readFileSync(join(DIR, 'processed.json'), 'utf8')).includes(issueId),
-    'it was un-processed despite not being requeued — it will re-dispatch with no ceiling');
+  writeFileSync(join(DIR, 'resume.json'), '[]');
+  const out = parkForResume([{ issueId: 'aaaa', identifier: 'APL-1', session: 'x', attempts: 3 }], 1);
+  assert.strictEqual(out.length, 0, 'a run past the attempt ceiling was parked anyway');
+  assert.deepStrictEqual(JSON.parse(readFileSync(join(DIR, 'resume.json'), 'utf8')), []);
 });
 
-t('a watch record with no issue id is reported, not silently dropped', () => {
-  writeFileSync(join(DIR, 'processed.json'), JSON.stringify([]));
-  assert.deepStrictEqual(requeueAfterLimit([{ identifier: 'APL-76', session: 'x', attempts: 1 }]), []);
+t('a watch record with no session id is reported, not silently parked', () => {
+  writeFileSync(join(DIR, 'resume.json'), '[]');
+  assert.deepStrictEqual(parkForResume([{ issueId: 'b', identifier: 'APL-76', attempts: 1 }], 1), []);
 });
 
-t('poll() requeues and ANNOUNCES a limited run, rather than only logging it', () => {
+t('resumeAfterLimit continues the SAME session rather than dispatching a new one', () => {
+  writeFileSync(join(DIR, 'resume.json'), JSON.stringify(
+    [{ session: 'a472f353', issueId: 'i1', identifier: 'APL-79', workflow: '/w', attempts: 2 }]));
+  writeFileSync(join(DIR, 'running.json'), '[]');
+  const calls = [];
+  const out = resumeAfterLimit((s, p) => calls.push([s, p]), () => JSON.stringify([]));
+  assert.strictEqual(calls.length, 1, 'nothing was resumed');
+  assert.strictEqual(calls[0][0], 'a472f353', 'a different session was resumed');
+  assert.match(calls[0][1], /reset/i, 'the resumed session is not told why it woke up');
+  assert.strictEqual(out.resumed.length, 1);
+  assert.deepStrictEqual(JSON.parse(readFileSync(join(DIR, 'resume.json'), 'utf8')), [],
+    'the record stayed parked, so it will resume again on the next poll');
+  const watched = JSON.parse(readFileSync(join(DIR, 'running.json'), 'utf8'));
+  assert.strictEqual(watched[0].session, 'a472f353',
+    'the resumed session is not watched, so a second limit in the new window goes unnoticed');
+});
+
+t('a session that restored itself is left alone — resuming it would start a COPY', () => {
+  writeFileSync(join(DIR, 'resume.json'), JSON.stringify(
+    [{ session: 'e416007a', issueId: 'i1', identifier: 'APL-84', workflow: '/w', attempts: 2 }]));
+  writeFileSync(join(DIR, 'running.json'), '[]');
+  const calls = [];
+  const agents = () => JSON.stringify([{ id: 'e416007a', name: '[APL-84] Sidebar', state: 'working' }]);
+  const out = resumeAfterLimit((s, p) => calls.push([s, p]), agents);
+  assert.strictEqual(calls.length, 0, 'it resumed a session that was already running — that starts a duplicate copy');
+  assert.strictEqual(out.selfRestored.length, 1);
+  assert.deepStrictEqual(JSON.parse(readFileSync(join(DIR, 'resume.json'), 'utf8')), [],
+    'the record was kept, so every later poll re-checks a session that is plainly fine');
+});
+
+t('a failed resume is retried, not dropped', () => {
+  writeFileSync(join(DIR, 'resume.json'), JSON.stringify(
+    [{ session: 'zz', issueId: 'i1', identifier: 'APL-9', workflow: '/w', attempts: 2 }]));
+  writeFileSync(join(DIR, 'running.json'), '[]');
+  const out = resumeAfterLimit(() => { throw new Error('claude exploded'); }, () => JSON.stringify([]));
+  assert.strictEqual(out.resumed.length, 0);
+  assert.strictEqual(JSON.parse(readFileSync(join(DIR, 'resume.json'), 'utf8')).length, 1,
+    'a resume that failed once dropped the run on the floor');
+});
+
+t('the resume prompt forbids starting over — a fresh run on the same branch is the failure mode', () => {
+  const text = resumePrompt({ identifier: 'APL-84', workflow: '/cycler:workflow-feature' });
+  assert.match(text, /APL-84/);
+  assert.match(text, /\/cycler:workflow-feature/);
+  assert.match(text, /not start over/i, 'the resumed session is free to redo the whole issue');
+});
+
+t('poll() parks and ANNOUNCES a limited run, rather than only logging it', () => {
   const src = readFileSync(POLLER, 'utf8');
   const loop = /const processed = new Set\(loadJson\(STATE_PATH[\s\S]*?\n  }\n\n  if \(changed\)/.exec(src);
-  assert.match(loop[0], /requeueAfterLimit\(review\.limited\)/,
-    'poll() never requeues the issues a usage limit killed — the cooldown expires onto an empty queue');
+  assert.match(loop[0], /parkForResume\(review\.limited/,
+    'poll() never parks the runs a usage limit killed — they are abandoned when the window reopens');
   assert.match(loop[0], /await comment\(\s*rec\.issueId/,
     'nothing is posted to Linear, so a run killed by the limit looks identical on the board to one never picked up');
   assert.match(loop[0], /resumesAt/, 'the comment does not say when the work resumes');
 });
 
-t('a resumed dispatch says so, and says it AFTER the line everything else matches on', () => {
+t('poll() resumes parked sessions once the cooldown is over, and says so on the issue', () => {
   const src = readFileSync(POLLER, 'utf8');
-  const fn = /async function dispatch\(issue\)[\s\S]*?\n}\n/.exec(src);
-  const body = /`⚡ Dispatched[\s\S]*?\n    \);/.exec(fn[0]);
-  assert.ok(body, 'the dispatch comment was not found');
-  assert.match(body[0], /Resumed/, 'a re-dispatch after a usage limit is indistinguishable from a first one');
-  assert.ok(body[0].indexOf('⚡ Dispatched') < body[0].indexOf('Resumed'),
-    'the resume note prefixes the comment — other checks match on "⚡ Dispatched" being first');
+  const block = /if \(cooling === 0\) \{[\s\S]*?\n  }\n/.exec(src);
+  assert.ok(block, 'poll() never resumes parked sessions — a limited run is parked and forgotten');
+  assert.match(block[0], /resumeAfterLimit\(\)/);
+  assert.match(block[0], /await comment\(/, 'a resume is invisible on the board');
 });
 
 process.exit(fails ? 1 : 0);
