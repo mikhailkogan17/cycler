@@ -28,6 +28,8 @@ const t = (n, fn) => { try { fn(); console.log('PASS', n); } catch (e) { fails++
 //
 //   { "id": "86ccedd1", "cwd": "...", "kind": "background",
 //     "startedAt": 1788280572426, "sessionId": "86cc...", "name": "[APL-24] ...", "state": "blocked" }
+//
+// Observed states: "working" (live, counts), "blocked" (waiting on a permission prompt, does not).
 const agent = (name, state, id) => ({ id: id || name.slice(0, 8), kind: 'background', name, state });
 const reads = (v) => () => (typeof v === 'string' ? v : JSON.stringify(v));
 
@@ -47,6 +49,14 @@ t('the registry field is `state` — reading `status` counts nothing and silentl
     `\`.status\` is read in ${reads_status.length} places — it belongs only in agentState()`);
   assert.match(src, /a\.state\s*\?\?\s*a\.status/,
     'agentState() does not prefer the real `state` key');
+});
+
+t('"working" is the live state the registry actually reports — verified against a running session', () => {
+  // Pinned from a real dispatch (APL-83, session e293fdee). The unrecognised-state default below
+  // happens to cover it, but a default is not a specification: if someone narrows that default,
+  // this is the test that stops the cap silently switching off again.
+  assert.strictEqual(isWorking({ state: 'working' }), true);
+  assert.strictEqual(countRunningSessions(reads([agent('[APL-83] cv-render', 'working')])), 1);
 });
 
 t('an unrecognised state counts as working — over-counting delays a poll, under-counting burns the window', () => {
