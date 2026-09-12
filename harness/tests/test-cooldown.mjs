@@ -207,7 +207,9 @@ t('resume uses the FULL session UUID, auto permissions, and runs from the repo',
   const fn = /function defaultResume[\s\S]*?\n}\n/.exec(src)[0];
   assert.match(fn, /cwd: REPO_PATH/, 'launchd cwd is "/" — the CLI starts a new session there');
   assert.match(fn, /PATH_PREPEND/);
-  assert.match(fn, /fullSessionId\(/);
+  assert.match(fn, /sessionId/);
+  assert.match(fn, /!isWorking\(hit\)[\s\S]*defaultStop\(session\)[\s\S]*resumeArgv/,
+    'an idle registered session is not stopped before --resume, so the CLI starts a copy');
 });
 
 t('poll() counts resumed sessions against max_concurrent', () => {

@@ -926,8 +926,16 @@ function resumeArgv(fullId, prompt) {
   return ['--background', '--permission-mode', 'auto', '--resume', fullId, prompt];
 }
 
-function defaultResume(session, prompt) {
-  const out = execFileSync(CLAUDE_BIN, resumeArgv(fullSessionId(session), prompt), {
+// A limit-killed session usually lingers in the registry as `blocked`, and the CLI treats a registered
+// session as running: --resume then starts a copy (a32900ea, 2026-09-12). `claude stop` keeps the
+// conversation and "`claude --resume` works once it is stopped", so stop an idle one first. A `working`
+// one is left alone; if the CLI copies it anyway, resumeAfterLimit stops the copy.
+function defaultResume(session, prompt, read = defaultAgentsRead) {
+  const hit = (readAgents(read) || []).find((a) => a && String(a.id || '') === session);
+  if (hit && !isWorking(hit)) {
+    try { defaultStop(session); } catch { /* already stopped */ }
+  }
+  const out = execFileSync(CLAUDE_BIN, resumeArgv((hit && hit.sessionId) || session, prompt), {
     cwd: REPO_PATH,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
