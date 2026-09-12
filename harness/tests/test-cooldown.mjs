@@ -13,10 +13,19 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+
+// requeueAfterLimit() WRITES processed.json, so the state dir is redirected before the module is
+// imported — DIR is resolved once at module load. Without this the suite would edit the real
+// ~/.cycler and a test run could re-dispatch live issues.
+const DIR = mkdtempSync(join(tmpdir(), 'cycler-cooldown-'));
+process.env.CYCLER_HOME = DIR;
 
 const POLLER = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'poller', 'poller.mjs');
-const { parseLimitReset, cooldownRemaining, busySessionIds } = await import(POLLER + '?cool=1');
+const { parseLimitReset, cooldownRemaining, busySessionIds, requeueAfterLimit } =
+  await import(POLLER + '?cool=1');
+assert.notStrictEqual(DIR, join(process.env.HOME || '', '.cycler'), 'the test is writing to the real state dir');
 
 let fails = 0;
 const t = (n, fn) => { try { fn(); console.log('PASS', n); } catch (e) { fails++; console.log('FAIL', n, '\n  ', e.message); } };
@@ -104,7 +113,62 @@ t('poll() honours the cooldown before dispatching, and it is the tail of a sessi
   assert.match(loop[0], /cooling\s*>\s*0\s*\?\s*0\s*:/, 'a live cooldown does not actually zero the slots');
   // The watch only exists because pending.json is dropped the moment a session proves it STARTED,
   // and a limit is hit hours later.
-  assert.match(src, /RUNNING_PATH[\s\S]{0,400}?watched\.push/, 'a confirmed session is never watched for how it ends');
+  assert.match(src, /RUNNING_PATH[\s\S]{0,1200}?watched\.push/, 'a confirmed session is never watched for how it ends');
+});
+
+t('the watch record carries issueId — without it a limited run cannot be requeued', () => {
+  // This is the whole difference between "the cooldown held the queue" and "the work resumed".
+  // APL-79 and APL-67 were both recorded as ending on the usage limit and both were then dropped:
+  // the issue stays in processed.json, so the cooldown expired onto an empty queue.
+  const src = readFileSync(POLLER, 'utf8');
+  const push = /watched\.push\(\{[\s\S]*?\}\)/.exec(src);
+  assert.ok(push, 'the watch record was not found');
+  assert.match(push[0], /issueId:/, 'the watch record has no issue id, so nothing can be un-processed');
+  assert.match(push[0], /attempts:/, 'the watch record loses the attempt count, so the retry ceiling never applies');
+});
+
+t('a limited session is REQUEUED — the issue comes back out of processed.json', () => {
+  const issueId = 'f10abda2-5d35-41d2-b800-e3681cdcec48';
+  writeFileSync(join(DIR, 'processed.json'), JSON.stringify([issueId, 'other-issue']));
+  const out = requeueAfterLimit([{ issueId, identifier: 'APL-79', session: 'a472f353', attempts: 1 }]);
+  assert.strictEqual(out.length, 1, 'the record was not requeued');
+  const processed = JSON.parse(readFileSync(join(DIR, 'processed.json'), 'utf8'));
+  assert.ok(!processed.includes(issueId), 'the issue is still processed, so it will never re-dispatch');
+  assert.ok(processed.includes('other-issue'), 'requeuing one issue wiped an unrelated one');
+});
+
+t('the retry ceiling still applies — an issue that hits the limit every time does not loop forever', () => {
+  const issueId = 'aaaa1111-0000-0000-0000-000000000000';
+  writeFileSync(join(DIR, 'processed.json'), JSON.stringify([issueId]));
+  const out = requeueAfterLimit([{ issueId, identifier: 'APL-1', session: 'x', attempts: 3 }]);
+  assert.strictEqual(out.length, 0, 'an issue past the attempt ceiling was requeued anyway');
+  assert.ok(JSON.parse(readFileSync(join(DIR, 'processed.json'), 'utf8')).includes(issueId),
+    'it was un-processed despite not being requeued — it will re-dispatch with no ceiling');
+});
+
+t('a watch record with no issue id is reported, not silently dropped', () => {
+  writeFileSync(join(DIR, 'processed.json'), JSON.stringify([]));
+  assert.deepStrictEqual(requeueAfterLimit([{ identifier: 'APL-76', session: 'x', attempts: 1 }]), []);
+});
+
+t('poll() requeues and ANNOUNCES a limited run, rather than only logging it', () => {
+  const src = readFileSync(POLLER, 'utf8');
+  const loop = /const processed = new Set\(loadJson\(STATE_PATH[\s\S]*?\n  }\n\n  if \(changed\)/.exec(src);
+  assert.match(loop[0], /requeueAfterLimit\(review\.limited\)/,
+    'poll() never requeues the issues a usage limit killed — the cooldown expires onto an empty queue');
+  assert.match(loop[0], /await comment\(\s*rec\.issueId/,
+    'nothing is posted to Linear, so a run killed by the limit looks identical on the board to one never picked up');
+  assert.match(loop[0], /resumesAt/, 'the comment does not say when the work resumes');
+});
+
+t('a resumed dispatch says so, and says it AFTER the line everything else matches on', () => {
+  const src = readFileSync(POLLER, 'utf8');
+  const fn = /async function dispatch\(issue\)[\s\S]*?\n}\n/.exec(src);
+  const body = /`⚡ Dispatched[\s\S]*?\n    \);/.exec(fn[0]);
+  assert.ok(body, 'the dispatch comment was not found');
+  assert.match(body[0], /Resumed/, 'a re-dispatch after a usage limit is indistinguishable from a first one');
+  assert.ok(body[0].indexOf('⚡ Dispatched') < body[0].indexOf('Resumed'),
+    'the resume note prefixes the comment — other checks match on "⚡ Dispatched" being first');
 });
 
 process.exit(fails ? 1 : 0);

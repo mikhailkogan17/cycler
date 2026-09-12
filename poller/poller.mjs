@@ -376,7 +376,13 @@ async function dispatch(issue) {
       issue.id,
       `⚡ Dispatched "${sessionName}"${sessionId ? ` — session \`${sessionId}\`` : ''} in \`${REPO_PATH}\`` +
         `\n\n**Route:** \`${workflow}\` — ${why}` +
-        `\n\nWatch it: \`claude attach ${sessionId || '<id>'}\` · \`claude logs ${sessionId || '<id>'}\``
+        `\n\nWatch it: \`claude attach ${sessionId || '<id>'}\` · \`claude logs ${sessionId || '<id>'}\`` +
+        // Appended, never prefixed: "⚡ Dispatched" is the first thing this comment says on every
+        // dispatch, and other things match on that.
+        ((carryAttempts.get(issue.id) || 1) > 1
+          ? `\n\n▶️ **Resumed** after the account's usage window reset — attempt `
+            + `${carryAttempts.get(issue.id)} of ${MAX_DISPATCH_ATTEMPTS}.`
+          : '')
     );
   } catch (err) {
     logErr(`dispatched ${issue.identifier} but could not comment: ${err.message}`);
@@ -430,7 +436,19 @@ async function checkLiveness() {
       if (rec.session) {
         try {
           const watched = loadJson(RUNNING_PATH, []).filter((r) => r.session !== rec.session);
-          watched.push({ session: rec.session, identifier: rec.identifier, at: Date.now() });
+          // issueId and workflow ride along because a session killed by the usage limit has to be
+          // RE-DISPATCHED once the window resets, and re-dispatching means deleting the issue from
+          // processed.json — which needs the issue's id, not its key. Watching without them is how
+          // APL-79 and APL-67 were each recorded as "ended on the usage limit" and then silently
+          // abandoned: the cooldown held the queue correctly and the queue had nothing left in it.
+          watched.push({
+            session: rec.session,
+            issueId: rec.issueId,
+            identifier: rec.identifier,
+            workflow: rec.workflow,
+            attempts: rec.attempts || 1,
+            at: Date.now(),
+          });
           writeFileSync(RUNNING_PATH, JSON.stringify(watched, null, 2));
         } catch (err) {
           logErr(`could not watch ${rec.identifier} for a usage limit: ${err.message}`);
@@ -708,8 +726,9 @@ function defaultLogsRead(id) {
 // no trace here, which is the point: only a limit holds the queue.
 function reviewRunning(readLogs = defaultLogsRead, busyIds = null) {
   const watched = loadJson(RUNNING_PATH, []);
-  if (!watched.length) return null;
+  if (!watched.length) return { state: null, limited: [] };
   const keep = [];
+  const limited = [];
   let hold = null;
   for (const rec of watched) {
     if (busyIds && rec.session && busyIds.has(rec.session)) { keep.push(rec); continue; }
@@ -719,13 +738,47 @@ function reviewRunning(readLogs = defaultLogsRead, busyIds = null) {
     if (until !== null) {
       logErr(`${rec.identifier} (session ${rec.session}) ended on the account's usage limit`);
       hold = Math.max(hold || 0, until);
+      limited.push(rec);
     }
   }
   writeFileSync(RUNNING_PATH, JSON.stringify(keep, null, 2));
-  if (hold === null) return null;
+  if (hold === null) return { state: null, limited: [] };
   const state = { until: hold, reason: 'a dispatched session ended on the account usage limit', at: Date.now() };
   writeFileSync(COOLDOWN_PATH, JSON.stringify(state, null, 2));
-  return state;
+  // The records come back rather than being acted on here: writing processed.json and posting to
+  // Linear are the caller's jobs, and keeping them out of this function is what lets the cooldown
+  // logic stay testable without a network.
+  return { state, limited };
+}
+
+// A session the usage limit killed did not finish its issue, so the issue must go back in the queue.
+// It is still in processed.json — dispatch() put it there and nothing takes it out — so without this
+// the cooldown expires onto an empty queue and the work is simply dropped, which is what happened to
+// APL-79 and APL-67.
+//
+// Attempts still count. An issue that hits the limit on every attempt would otherwise re-dispatch
+// forever, burning each new window on the same run and never reaching the retry ceiling that exists
+// for exactly this.
+function requeueAfterLimit(limited) {
+  const processed = new Set(loadJson(STATE_PATH, []));
+  const requeued = [];
+  for (const rec of limited) {
+    if (!rec.issueId) {
+      logErr(`${rec.identifier} was killed by the usage limit but its watch record has no issue id — `
+        + `it cannot be requeued automatically; remove it from ~/.cycler/processed.json by hand`);
+      continue;
+    }
+    const attempts = rec.attempts || 1;
+    if (attempts >= MAX_DISPATCH_ATTEMPTS) {
+      logErr(`${rec.identifier} has been killed by the usage limit ${attempts} times — not requeuing`);
+      continue;
+    }
+    processed.delete(rec.issueId);
+    carryAttempts.set(rec.issueId, attempts + 1);
+    requeued.push(rec);
+  }
+  if (requeued.length) writeFileSync(STATE_PATH, JSON.stringify([...processed], null, 2));
+  return requeued;
 }
 
 // issueId -> the attempt number the NEXT dispatch of it represents. Lives for one poll: it is the
@@ -758,7 +811,31 @@ async function poll() {
   }
   const running = countRunningSessions();
   // Read once a session stops being busy: did it stop because the account's window ran out?
-  reviewRunning(defaultLogsRead, busySessionIds());
+  const review = reviewRunning(defaultLogsRead, busySessionIds());
+  if (review.limited.length) {
+    const resumesAt = new Date(review.state.until);
+    for (const rec of requeueAfterLimit(review.limited)) {
+      // Say it on the ISSUE, not only in a log file nobody opens. A run that vanishes because the
+      // account's window ran out is indistinguishable on the board from one that was never picked
+      // up, and that ambiguity is the whole reason every other outcome here posts a comment.
+      try {
+        await comment(
+          rec.issueId,
+          `⏸️ **Paused — Claude usage limit reached.**\n\n`
+            + `The session working this issue (\`${rec.session}\`) was killed when the account's `
+            + `5-hour window ran out. Nothing was lost that a re-run cannot redo, but the work is `
+            + `**not finished**.\n\n`
+            + `The poller has put this issue back in its queue and is holding every dispatch until `
+            + `**${resumesAt.toISOString()}**, when the window resets. It will re-dispatch `
+            + `automatically then — no action needed.\n\n`
+            + `Attempt ${(rec.attempts || 1) + 1} of ${MAX_DISPATCH_ATTEMPTS}.`
+        );
+      } catch (err) {
+        logErr(`could not tell ${rec.identifier} it was paused on the usage limit: ${err.message}`);
+      }
+      log(`${rec.identifier} requeued — re-dispatches after the usage window resets at ${resumesAt.toISOString()}`);
+    }
+  }
   const cooling = cooldownRemaining(loadJson(COOLDOWN_PATH, null));
   if (cooling > 0) {
     log(`holding off: a dispatched session ended on the account usage limit — nothing goes out for `
@@ -818,7 +895,7 @@ async function poll() {
 // and it is only checkable if it can be called.
 export { workflowFor, buildDispatchArgv, splitCommand, DEFAULT_DISPATCH, dispatchBudget, readClaudeExpiry,
   countRunningSessions, concurrencySlots, busySessionIds, parseLimitReset, cooldownRemaining,
-  agentState, isWorking, findSessionByKey };
+  agentState, isWorking, findSessionByKey, requeueAfterLimit };
 
 // Run only when executed directly, not when imported.
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
