@@ -16,34 +16,69 @@ import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 
 const POLLER = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'poller', 'poller.mjs');
-const { countRunningSessions, concurrencySlots } = await import(POLLER + '?conc=1');
+const { countRunningSessions, busySessionIds, concurrencySlots, isWorking } = await import(POLLER + '?conc=1');
 
 let fails = 0;
 const t = (n, fn) => { try { fn(); console.log('PASS', n); } catch (e) { fails++; console.log('FAIL', n, '\n  ', e.message); } };
 
-const agent = (name, status) => ({ name, status });
+// This shape is copied from real `claude agents --json` output, not invented. Getting it wrong is
+// what let the cap ship broken: every fixture here used to say `status`, a key the registry has
+// never emitted, so the whole file passed against code that could not work.
+//
+//   { "id": "86ccedd1", "cwd": "...", "kind": "background",
+//     "startedAt": 1788280572426, "sessionId": "86cc...", "name": "[APL-24] ...", "state": "blocked" }
+const agent = (name, state, id) => ({ id: id || name.slice(0, 8), kind: 'background', name, state });
 const reads = (v) => () => (typeof v === 'string' ? v : JSON.stringify(v));
 
-t('a busy dispatched session is counted', () => {
-  assert.strictEqual(countRunningSessions(reads([agent('[APL-78] Scoring resolves a key', 'busy')])), 1);
+t('a working dispatched session is counted', () => {
+  assert.strictEqual(countRunningSessions(reads([agent('[APL-78] Scoring resolves a key', 'running')])), 1);
+});
+
+t('the registry field is `state` — reading `status` counts nothing and silently disables the cap', () => {
+  // The regression this file failed to catch for two releases. `undefined === 'busy'` is false for
+  // every entry, so the count was a confident 0 forever and the log read "0 sessions running" while
+  // two were live. Asserted on the real key, then on the source, because a fixture carrying BOTH
+  // keys would let a `status`-only reader stay green.
+  assert.strictEqual(countRunningSessions(reads([{ name: '[APL-78] x', state: 'running' }])), 1);
+  const src = readFileSync(POLLER, 'utf8');
+  const reads_status = src.match(/\.status\b/g) || [];
+  assert.ok(reads_status.length <= 1,
+    `\`.status\` is read in ${reads_status.length} places — it belongs only in agentState()`);
+  assert.match(src, /a\.state\s*\?\?\s*a\.status/,
+    'agentState() does not prefer the real `state` key');
+});
+
+t('an unrecognised state counts as working — over-counting delays a poll, under-counting burns the window', () => {
+  assert.strictEqual(countRunningSessions(reads([agent('[APL-1] x', 'thinking')])), 1);
+  assert.strictEqual(isWorking({ state: 'some-new-state' }), true);
+  // ...but a missing state is not a state. That is an unparseable entry, not a working session.
+  assert.strictEqual(isWorking({ name: '[APL-1] x' }), false);
+});
+
+t('busySessionIds reads the same field — it gates the usage-limit cooldown', () => {
+  // With this broken, every watched session reads as "stopped" on the next poll, so reviewRunning()
+  // scans logs for a limit message while the run is still live and finds nothing. That is why the
+  // cooldown only engaged AFTER the window was already gone.
+  const list = [agent('[APL-1] a', 'running', 'aaa'), agent('[APL-2] b', 'blocked', 'bbb')];
+  assert.deepStrictEqual([...busySessionIds(reads(list))], ['aaa']);
 });
 
 t('an idle or blocked session is NOT counted — that is how a limit-hit run stalls the queue forever', () => {
   // Yesterday's two sessions sat idle/blocked for fifteen hours. Counting them would mean the
   // poller never dispatched again, which is strictly worse than the burn this check prevents.
-  const list = [agent('[APL-74] Every apply attempt fails', 'idle'), agent('[APL-78] Scoring', 'idle')];
+  const list = [agent('[APL-74] Every apply attempt fails', 'idle'), agent('[APL-78] Scoring', 'blocked')];
   assert.strictEqual(countRunningSessions(reads(list)), 0);
 });
 
 t('a session this poller did not start is not counted against it', () => {
   // dispatch() names every session "[KEY-N] title". Anything else is the human's own window, and
   // holding the queue because someone opened an unrelated session is not the contract.
-  const list = [agent('my own refactor', 'busy'), agent('[APL-9] real one', 'busy')];
+  const list = [agent('my own refactor', 'running'), agent('[APL-9] real one', 'running')];
   assert.strictEqual(countRunningSessions(reads(list)), 1);
 });
 
 t('both listing shapes parse — a bare array and { agents: [...] }', () => {
-  const one = [agent('[APL-1] a', 'busy')];
+  const one = [agent('[APL-1] a', 'running')];
   assert.strictEqual(countRunningSessions(reads(one)), 1);
   assert.strictEqual(countRunningSessions(reads({ agents: one })), 1);
 });
@@ -56,7 +91,7 @@ t('an unreadable registry is "could not tell" (null), never a confident zero', (
 });
 
 t('a malformed entry does not throw or inflate the count', () => {
-  assert.strictEqual(countRunningSessions(reads([null, {}, agent(undefined, 'busy'), agent('[APL-2] x', 'busy')])), 1);
+  assert.strictEqual(countRunningSessions(reads([null, {}, { name: undefined, state: 'running' }, agent('[APL-2] x', 'running')])), 1);
 });
 
 t('slots: nothing running yields the full limit; the limit being reached yields zero', () => {

@@ -536,10 +536,35 @@ function dispatchBudget(expiresAt, now = Date.now(), skewMs = REFRESH_SKEW_MS) {
 // and never an LLM call" still holds.
 //
 // Only sessions this poller could have started are counted, identified by the name dispatch() gives
-// them ("[APL-78] title"), and only while they are `busy`. Counting an idle one would be a stall
-// with extra steps: yesterday's two sessions sat `idle`/`blocked` for fifteen hours after hitting
-// the limit, and a poller that counted those would never dispatch again.
+// them ("[APL-78] title"), and only while they are actually working. Counting an idle one would be a
+// stall with extra steps: two sessions sat `idle`/`blocked` for fifteen hours after hitting the
+// limit, and a poller that counted those would never dispatch again.
 const SESSION_NAME_RE = /^\[[A-Z][A-Z0-9]*-\d+\]/;
+
+// The registry reports this as `state`. It was read as `status` from the day the cap was written,
+// and `undefined === 'busy'` is false for every entry, so countRunningSessions() returned a
+// confident 0 on every poll and dispatch.max_concurrent was never once enforced. It did not fail
+// open — the listing parsed fine — which is why nothing in the log ever looked wrong: it said
+// "0 dispatched session(s) still running" while two provably-live sessions were emptying the
+// account's usage window. `status` is still accepted so a future rename cannot re-break this the
+// same way, and agentState() is the ONLY place either name appears.
+function agentState(a) {
+  return String((a && (a.state ?? a.status)) || '').toLowerCase();
+}
+
+// Named by what they are: states in which a session will not consume another token unattended.
+// `blocked` is here deliberately — it means "waiting on a permission prompt", which holds a worktree
+// but makes no progress and never ends on its own, so counting it stalls the queue permanently.
+// An UNRECOGNISED state counts as working, which is the safe direction: over-counting costs one
+// poll of delay, under-counting costs the whole usage window.
+const AGENT_IDLE_STATES = new Set([
+  'idle', 'blocked', 'completed', 'done', 'failed', 'error', 'stopped', 'killed', 'canceled', 'cancelled',
+]);
+
+function isWorking(a) {
+  const state = agentState(a);
+  return state !== '' && !AGENT_IDLE_STATES.has(state);
+}
 
 function defaultAgentsRead() {
   return execFileSync(CLAUDE_BIN, ['agents', '--json'],
@@ -561,7 +586,7 @@ function readAgents(read) {
 function countRunningSessions(read = defaultAgentsRead) {
   const list = readAgents(read);
   if (list === null) return null;
-  return list.filter((a) => a && a.status === 'busy' && SESSION_NAME_RE.test(String(a.name || ''))).length;
+  return list.filter((a) => a && isWorking(a) && SESSION_NAME_RE.test(String(a.name || ''))).length;
 }
 
 // Short ids of everything still busy, for deciding which watched sessions have actually stopped.
@@ -569,7 +594,7 @@ function countRunningSessions(read = defaultAgentsRead) {
 // early — harmless, since reading a live session's log finds no limit message.
 function busySessionIds(read = defaultAgentsRead) {
   const list = readAgents(read) || [];
-  return new Set(list.filter((a) => a && a.status === 'busy').map((a) => String(a.id || '')));
+  return new Set(list.filter((a) => a && isWorking(a)).map((a) => String(a.id || '')));
 }
 
 // Fails OPEN, for the same reason dispatchBudget() does: a machine where this process cannot ask
@@ -762,7 +787,8 @@ async function poll() {
 // a dispatch command that silently renders wrong is the failure this whole file is careful about,
 // and it is only checkable if it can be called.
 export { workflowFor, buildDispatchArgv, splitCommand, DEFAULT_DISPATCH, dispatchBudget, readClaudeExpiry,
-  countRunningSessions, concurrencySlots, busySessionIds, parseLimitReset, cooldownRemaining };
+  countRunningSessions, concurrencySlots, busySessionIds, parseLimitReset, cooldownRemaining,
+  agentState, isWorking };
 
 // Run only when executed directly, not when imported.
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
