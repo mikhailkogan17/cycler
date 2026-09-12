@@ -24,7 +24,7 @@ process.env.CYCLER_HOME = DIR;
 
 const POLLER = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'poller', 'poller.mjs');
 const { parseLimitReset, cooldownRemaining, busySessionIds, parkForResume, resumeAfterLimit,
-  resumePrompt } =
+  resumePrompt, resumeArgv, fullSessionId } =
   await import(POLLER + '?cool=1');
 assert.notStrictEqual(DIR, join(process.env.HOME || '', '.cycler'), 'the test is writing to the real state dir');
 
@@ -171,17 +171,48 @@ t('resumeAfterLimit continues the SAME session rather than dispatching a new one
     'the resumed session is not watched, so a second limit in the new window goes unnoticed');
 });
 
-t('a session that restored itself is left alone — resuming it would start a COPY', () => {
+t('resume is ALWAYS called; a copy the CLI starts for an already-running session is stopped', () => {
   writeFileSync(join(DIR, 'resume.json'), JSON.stringify(
     [{ session: 'e416007a', issueId: 'i1', identifier: 'APL-84', workflow: '/w', attempts: 2 }]));
   writeFileSync(join(DIR, 'running.json'), '[]');
-  const calls = [];
+  const calls = [], stopped = [];
   const agents = () => JSON.stringify([{ id: 'e416007a', name: '[APL-84] Sidebar', state: 'working' }]);
-  const out = resumeAfterLimit((s, p) => calls.push([s, p]), agents);
-  assert.strictEqual(calls.length, 0, 'it resumed a session that was already running — that starts a duplicate copy');
+  const out = resumeAfterLimit((s) => { calls.push(s); return 'b9bc6f60'; }, agents, (id) => stopped.push(id));
+  assert.strictEqual(calls.length, 1, 'resume was skipped');
+  assert.deepStrictEqual(stopped, ['b9bc6f60'], 'the duplicate copy was left running');
   assert.strictEqual(out.selfRestored.length, 1);
-  assert.deepStrictEqual(JSON.parse(readFileSync(join(DIR, 'resume.json'), 'utf8')), [],
-    'the record was kept, so every later poll re-checks a session that is plainly fine');
+  assert.deepStrictEqual(JSON.parse(readFileSync(join(DIR, 'resume.json'), 'utf8')), []);
+});
+
+t('a copy started for a DEAD session is stopped and the resume retried (the 0.2.11 b9bc6f60 bug)', () => {
+  writeFileSync(join(DIR, 'resume.json'), JSON.stringify(
+    [{ session: '8b56d07d', issueId: 'i1', identifier: 'APL-87', workflow: '/w', attempts: 2 }]));
+  writeFileSync(join(DIR, 'running.json'), '[]');
+  const stopped = [];
+  const out = resumeAfterLimit(() => 'b9bc6f60', () => '[]', (id) => stopped.push(id));
+  assert.deepStrictEqual(stopped, ['b9bc6f60']);
+  assert.strictEqual(out.resumed.length, 0, 'a new session was counted as a resume');
+  assert.strictEqual(JSON.parse(readFileSync(join(DIR, 'resume.json'), 'utf8')).length, 1);
+});
+
+t('resume uses the FULL session UUID, auto permissions, and runs from the repo', () => {
+  const agents = () => JSON.stringify([{ id: '8b56d07d', sessionId: '8b56d07d-4184-49fe-86b2-04a9b1981c49' }]);
+  assert.strictEqual(fullSessionId('8b56d07d', agents), '8b56d07d-4184-49fe-86b2-04a9b1981c49');
+  const argv = resumeArgv('8b56d07d-4184-49fe-86b2-04a9b1981c49', 'go');
+  assert.deepStrictEqual(argv.slice(argv.indexOf('--resume'), argv.indexOf('--resume') + 2),
+    ['--resume', '8b56d07d-4184-49fe-86b2-04a9b1981c49']);
+  assert.ok(argv.includes('--background'));
+  assert.match(argv.join(' '), /--permission-mode auto/);
+  const src = readFileSync(POLLER, 'utf8');
+  const fn = /function defaultResume[\s\S]*?\n}\n/.exec(src)[0];
+  assert.match(fn, /cwd: REPO_PATH/, 'launchd cwd is "/" — the CLI starts a new session there');
+  assert.match(fn, /PATH_PREPEND/);
+  assert.match(fn, /fullSessionId\(/);
+});
+
+t('poll() counts resumed sessions against max_concurrent', () => {
+  assert.match(readFileSync(POLLER, 'utf8'), /running \+= resumed\.length/,
+    'a resume and a fresh dispatch went out in the same poll at max_concurrent=1');
 });
 
 t('a failed resume is retried, not dropped', () => {

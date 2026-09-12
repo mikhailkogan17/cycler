@@ -854,21 +854,27 @@ function parkForResume(limited, until) {
 //
 // Records survive a failed resume: they stay in resume.json and the next poll tries again, up to the
 // attempt ceiling parkForResume() already applied.
-function resumeAfterLimit(runResume = defaultResume, read = defaultAgentsRead) {
+function resumeAfterLimit(runResume = defaultResume, read = defaultAgentsRead, stop = defaultStop) {
   const parked = loadJson(RESUME_PATH, []);
   if (!parked.length) return { resumed: [], selfRestored: [] };
   const keep = [];
   const resumed = [];
   const selfRestored = [];
   for (const rec of parked) {
-    const live = liveSessionFor(rec.identifier, read);
-    if (live) {
-      log(`${rec.identifier} — session ${live} came back on its own after the reset; not resuming`);
-      selfRestored.push(rec);
-      continue;
-    }
     try {
-      runResume(rec.session, resumePrompt(rec));
+      const got = runResume(rec.session, resumePrompt(rec));
+      if (typeof got === 'string' && got && !rec.session.startsWith(got) && !got.startsWith(rec.session)) {
+        // The CLI started a copy instead of continuing. A second session is exactly what resuming is
+        // meant to prevent, so kill it and retry next poll.
+        try { stop(got); } catch { /* already gone */ }
+        const live = liveSessionFor(rec.identifier, read);
+        if (live) {
+          log(`${rec.identifier} — session ${live} was already running again; stopped the copy ${got}`);
+          selfRestored.push(rec);
+          continue;
+        }
+        throw new Error(`the CLI started a new session ${got} instead of continuing ${rec.session} (stopped it)`);
+      }
       log(`resumed ${rec.identifier} session=${rec.session} after the usage window reset `
         + `(attempt ${rec.attempts} of ${MAX_DISPATCH_ATTEMPTS})`);
       resumed.push(rec);
@@ -907,9 +913,33 @@ function resumePrompt(rec) {
     + `create a second branch or worktree.`;
 }
 
+// The registry lists sessions by an 8-char short id; --resume wants the full UUID. Resuming by the
+// short id, or from launchd's cwd "/", makes the CLI start a brand-new session instead (2026-09-12,
+// APL-87: "resumed" 8b56d07d became a fresh b9bc6f60 in "/"). So: full id, the repo as cwd, and the
+// same PATH and permission mode dispatch uses. Returns the id the CLI reports it backgrounded.
+function fullSessionId(session, read = defaultAgentsRead) {
+  const hit = (readAgents(read) || []).find((a) => a && String(a.id || '') === session);
+  return (hit && hit.sessionId) || session;
+}
+
+function resumeArgv(fullId, prompt) {
+  return ['--background', '--permission-mode', 'auto', '--resume', fullId, prompt];
+}
+
 function defaultResume(session, prompt) {
-  return execFileSync(CLAUDE_BIN, ['--background', '--resume', session, prompt],
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30_000 });
+  const out = execFileSync(CLAUDE_BIN, resumeArgv(fullSessionId(session), prompt), {
+    cwd: REPO_PATH,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+    timeout: 30_000,
+    env: { ...process.env, PATH: [...PATH_PREPEND, process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin'].join(':') },
+  });
+  const m = /backgrounded\s+·\s+(\S+)/.exec(out || '');
+  return m ? m[1] : null;
+}
+
+function defaultStop(session) {
+  execFileSync(CLAUDE_BIN, ['stop', session], { stdio: 'ignore', timeout: 15_000 });
 }
 
 // issueId -> the attempt number the NEXT dispatch of it represents. Lives for one poll: it is the
@@ -946,7 +976,7 @@ async function poll() {
     log('claude credential is stale — dispatching one issue this poll so a single session performs '
       + 'the refresh; the rest go out on the next poll');
   }
-  const running = countRunningSessions();
+  let running = countRunningSessions();
   // Read once a session stops being busy: did it stop because the account's window ran out?
   const review = reviewRunning(defaultLogsRead, busySessionIds());
   if (review.limited.length) {
@@ -982,6 +1012,8 @@ async function poll() {
     // The window is open again. Parked sessions go first: they are half-finished runs, and resuming
     // one costs less than the fresh dispatch that would otherwise take the same slot.
     const { resumed, selfRestored } = resumeAfterLimit();
+    // A resumed session occupies a slot now, even if the registry has not caught up yet.
+    if (running !== null) running += resumed.length;
     for (const rec of resumed) {
       try {
         await comment(
@@ -1075,7 +1107,7 @@ async function poll() {
 // and it is only checkable if it can be called.
 export { workflowFor, buildDispatchArgv, splitCommand, DEFAULT_DISPATCH, dispatchBudget, readClaudeExpiry,
   countRunningSessions, concurrencySlots, busySessionIds, parseLimitReset, cooldownRemaining,
-  agentState, isWorking, findSessionByKey, liveSessionFor, parkForResume, resumeAfterLimit, resumePrompt, isBlocked,
+  agentState, isWorking, findSessionByKey, liveSessionFor, parkForResume, resumeAfterLimit, resumePrompt, resumeArgv, fullSessionId, isBlocked,
   blockerKeys };
 
 // Run only when executed directly, not when imported.
