@@ -16,7 +16,8 @@ import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 
 const POLLER = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'poller', 'poller.mjs');
-const { countRunningSessions, busySessionIds, concurrencySlots, isWorking } = await import(POLLER + '?conc=1');
+const { countRunningSessions, busySessionIds, concurrencySlots, isWorking, findSessionByKey } =
+  await import(POLLER + '?conc=1');
 
 let fails = 0;
 const t = (n, fn) => { try { fn(); console.log('PASS', n); } catch (e) { fails++; console.log('FAIL', n, '\n  ', e.message); } };
@@ -92,6 +93,50 @@ t('an unreadable registry is "could not tell" (null), never a confident zero', (
 
 t('a malformed entry does not throw or inflate the count', () => {
   assert.strictEqual(countRunningSessions(reads([null, {}, { name: undefined, state: 'running' }, agent('[APL-2] x', 'running')])), 1);
+});
+
+t('a session id missing from stdout is recovered from the registry', () => {
+  // Not cosmetic. The id is how reviewRunning() watches a session for the usage-limit message that
+  // holds the queue, so a dispatch that loses it can burn the whole window with no cooldown. APL-76
+  // went out this way: `dispatched APL-76 session=unknown`, then nothing watched it.
+  const list = [agent('[APL-9] other', 'running', 'nnn'), agent('[APL-76] markGrantRevoked never', 'running', 'abc')];
+  assert.strictEqual(findSessionByKey('APL-76', reads(list)), 'abc');
+});
+
+t('matching is on the [KEY] prefix, because both dispatch and the registry truncate the name', () => {
+  // dispatch() slices the session name to 80 chars and the registry truncates again, so a full-name
+  // comparison is a coin flip on long titles. The prefix is exact.
+  const long = '[APL-13] Add schedule/cron settings to the app — currently only editable in serv';
+  assert.strictEqual(findSessionByKey('APL-13', reads([agent(long, 'running', 'xyz')])), 'xyz');
+  // A different key that merely starts the same must not match.
+  assert.strictEqual(findSessionByKey('APL-1', reads([agent(long, 'running', 'xyz')])), null);
+});
+
+t('a re-dispatch resolves to the NEWEST entry, not the corpse of the previous run', () => {
+  const list = [
+    { id: 'old', name: '[APL-76] markGrantRevoked', state: 'blocked', startedAt: 1000 },
+    { id: 'new', name: '[APL-76] markGrantRevoked', state: 'running', startedAt: 2000 },
+  ];
+  assert.strictEqual(findSessionByKey('APL-76', reads(list)), 'new');
+});
+
+t('an unreadable or empty registry yields null, never a throw — dispatch already succeeded', () => {
+  assert.strictEqual(findSessionByKey('APL-76', () => { throw new Error('not a TTY'); }), null);
+  assert.strictEqual(findSessionByKey('APL-76', reads('garbage')), null);
+  assert.strictEqual(findSessionByKey('APL-76', reads([])), null);
+});
+
+t('dispatch() actually consults the fallback before recording the session as pending', () => {
+  // The pure cases above all stay green if dispatch() never calls it. This reads the source.
+  const src = readFileSync(POLLER, 'utf8');
+  const fn = /async function dispatch\(issue\)[\s\S]*?\n}\n/.exec(src);
+  assert.ok(fn, 'dispatch() was not found — this test is asserting nothing');
+  assert.match(fn[0], /if \(!sessionId\)[\s\S]*?findSessionByKey\(issue\.identifier\)/,
+    'dispatch() does not fall back to the registry when stdout yields no id');
+  const record = /pending\.push\(\{[\s\S]*?\}\)/.exec(fn[0]);
+  assert.ok(record, 'the pending record was not found');
+  assert.match(record[0], /session: sessionId/,
+    'the pending record does not use the resolved id, so the fallback changes nothing');
 });
 
 t('slots: nothing running yields the full limit; the limit being reached yields zero', () => {

@@ -317,7 +317,7 @@ async function dispatch(issue) {
       },
     }
   );
-  const sessionId = await new Promise((resolve, reject) => {
+  const printedSessionId = await new Promise((resolve, reject) => {
     let out = '';
     let err = '';
     let spawned = false;
@@ -336,6 +336,18 @@ async function dispatch(issue) {
     });
   });
   child.unref();
+  // Fall back to the registry when stdout did not yield an id. Failing to resolve it is survivable —
+  // liveness still proves the run started off the Linear start marker, which needs no session id —
+  // so this never throws, it just leaves `session` null as before.
+  let sessionId = printedSessionId;
+  if (!sessionId) {
+    try {
+      sessionId = findSessionByKey(issue.identifier);
+      if (sessionId) log(`dispatched ${issue.identifier} printed no session id — resolved ${sessionId} from the registry`);
+    } catch (err) {
+      logErr(`could not resolve a session id for ${issue.identifier} from the registry: ${err.message}`);
+    }
+  }
   log(`dispatched ${issue.identifier} workflow=${workflow} session=${sessionId || 'unknown'}`);
   // Record it as UNPROVEN. checkLiveness() on a later poll decides whether this session ever ran.
   // Written before the announcement comment on purpose: a dispatch that is announced but not tracked
@@ -560,6 +572,24 @@ function agentState(a) {
 const AGENT_IDLE_STATES = new Set([
   'idle', 'blocked', 'completed', 'done', 'failed', 'error', 'stopped', 'killed', 'canceled', 'cancelled',
 ]);
+
+// dispatch() takes the session id from the child's stdout, and when that line is not what the regex
+// expects the id is simply lost. It is not cosmetic: the id is how reviewRunning() watches a session
+// for the usage-limit message that holds the queue, so a session dispatched without one can burn the
+// whole window with no cooldown to show for it. APL-76 went out this way.
+//
+// The registry is the authoritative answer to "what did I just start", so ask it. Matching is on the
+// `[KEY]` prefix rather than the full name because dispatch() truncates the name to 80 chars and the
+// registry truncates again; the prefix is exact and one dispatch owns one key at a time.
+function findSessionByKey(identifier, read = defaultAgentsRead) {
+  const list = readAgents(read);
+  if (list === null) return null;
+  const prefix = `[${identifier}]`;
+  const hit = list.filter((a) => a && String(a.name || '').startsWith(prefix))
+    // Newest wins: a re-dispatch after a dead run leaves the old entry in place for a while.
+    .sort((a, b) => (Number(b.startedAt) || 0) - (Number(a.startedAt) || 0))[0];
+  return hit && hit.id ? String(hit.id) : null;
+}
 
 function isWorking(a) {
   const state = agentState(a);
@@ -788,7 +818,7 @@ async function poll() {
 // and it is only checkable if it can be called.
 export { workflowFor, buildDispatchArgv, splitCommand, DEFAULT_DISPATCH, dispatchBudget, readClaudeExpiry,
   countRunningSessions, concurrencySlots, busySessionIds, parseLimitReset, cooldownRemaining,
-  agentState, isWorking };
+  agentState, isWorking, findSessionByKey };
 
 // Run only when executed directly, not when imported.
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
