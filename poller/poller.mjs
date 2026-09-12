@@ -645,6 +645,33 @@ function busySessionIds(read = defaultAgentsRead) {
   return new Set(list.filter((a) => a && isWorking(a)).map((a) => String(a.id || '')));
 }
 
+// An issue is blocked while any issue that "blocks" it is not finished.
+//
+// Linear stores the relation on the BLOCKER ("A blocks B" lives on A), so B sees it as an inverse
+// relation. Getting that backwards is silent in the worst way: every issue reads as unblocked and
+// the feature looks like it works right up until the ordering matters.
+//
+// Only `blocks` counts. `related` and `duplicate` are not ordering constraints and treating them as
+// such would stall a queue for reasons nobody wrote down.
+//
+// Fails OPEN, like every other guard here: an issue whose relations cannot be read dispatches. A
+// missing field must not become a queue that silently stops.
+function isBlocked(issue) {
+  const nodes = issue?.inverseRelations?.nodes;
+  if (!Array.isArray(nodes)) return false;
+  return nodes.some((r) =>
+    r && r.type === 'blocks' && r.issue && !['completed', 'canceled'].includes(r.issue.state?.type));
+}
+
+// Which ones, for the log line — "blocked" with no blocker named is a dead end for whoever reads it.
+function blockerKeys(issue) {
+  const nodes = issue?.inverseRelations?.nodes;
+  if (!Array.isArray(nodes)) return [];
+  return nodes
+    .filter((r) => r && r.type === 'blocks' && r.issue && !['completed', 'canceled'].includes(r.issue.state?.type))
+    .map((r) => r.issue.identifier);
+}
+
 // Fails OPEN, for the same reason dispatchBudget() does: a machine where this process cannot ask
 // what is running must behave exactly as it did before this existed. Turning "I don't know" into
 // "dispatch nothing" would make an unreadable registry a silent, permanent stall.
@@ -790,7 +817,13 @@ async function poll() {
   const { issues } = await gql(
     `query ($delegateId: ID!) {
        issues(first: ${MAX_PER_POLL}, filter: { delegate: { id: { eq: $delegateId } } }) {
-         nodes { id identifier title state { type } labels { nodes { name } } }
+         nodes {
+           id identifier title state { type } labels { nodes { name } }
+           # "A blocks B" is stored on A, so B finds it through inverseRelations. Fetching this is
+           # what makes a blocking link mean something to the poller: without it the board can say
+           # an issue is blocked and the poller will cheerfully dispatch it anyway.
+           inverseRelations { nodes { type issue { identifier state { type } } } }
+         }
        }
      }`,
     { delegateId: viewer.id }
@@ -853,6 +886,13 @@ async function poll() {
     if (budget <= 0) break;
     if (processed.has(issue.id)) continue;
     if (['completed', 'canceled'].includes(issue.state?.type)) continue;
+    // Checked BEFORE the budget is spent, and deliberately not marked processed: a blocked issue is
+    // not finished with, it is waiting. It is re-examined every poll and goes out on the first one
+    // after its blockers close, with no further action from anyone.
+    if (isBlocked(issue)) {
+      log(`skipping ${issue.identifier} — blocked by ${blockerKeys(issue).join(', ')}`);
+      continue;
+    }
     try {
       // Inside the try on purpose. Thrown from out here it escaped poll() entirely, so a mistyped
       // repo.path aborted the whole poll before the failure comment below and every delegated issue
@@ -895,7 +935,7 @@ async function poll() {
 // and it is only checkable if it can be called.
 export { workflowFor, buildDispatchArgv, splitCommand, DEFAULT_DISPATCH, dispatchBudget, readClaudeExpiry,
   countRunningSessions, concurrencySlots, busySessionIds, parseLimitReset, cooldownRemaining,
-  agentState, isWorking, findSessionByKey, requeueAfterLimit };
+  agentState, isWorking, findSessionByKey, requeueAfterLimit, isBlocked, blockerKeys };
 
 // Run only when executed directly, not when imported.
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
