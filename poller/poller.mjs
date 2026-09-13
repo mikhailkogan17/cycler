@@ -854,32 +854,21 @@ function parkForResume(limited, until) {
 //
 // Records survive a failed resume: they stay in resume.json and the next poll tries again, up to the
 // attempt ceiling parkForResume() already applied.
-function resumeAfterLimit(runResume = defaultResume, read = defaultAgentsRead, stop = defaultStop) {
+function resumeAfterLimit(runResume = defaultResume, read = defaultAgentsRead) {
   const parked = loadJson(RESUME_PATH, []);
   if (!parked.length) return { resumed: [], selfRestored: [] };
   const keep = [];
   const resumed = [];
-  const selfRestored = [];
   for (const rec of parked) {
     try {
-      const got = runResume(rec.session, resumePrompt(rec));
-      if (typeof got === 'string' && got && !rec.session.startsWith(got) && !got.startsWith(rec.session)) {
-        // The CLI started a copy instead of continuing. A second session is exactly what resuming is
-        // meant to prevent, so kill it and retry next poll.
-        try { stop(got); } catch { /* already gone */ }
-        const live = liveSessionFor(rec.identifier, read);
-        if (live) {
-          log(`${rec.identifier} — session ${live} was already running again; stopped the copy ${got}`);
-          selfRestored.push(rec);
-          continue;
-        }
-        throw new Error(`the CLI started a new session ${got} instead of continuing ${rec.session} (stopped it)`);
-      }
-      log(`resumed ${rec.identifier} session=${rec.session} after the usage window reset `
-        + `(attempt ${rec.attempts} of ${MAX_DISPATCH_ATTEMPTS})`);
+      runResume(rec.session, resumePrompt(rec));
+      rec.remoteUrl = remoteControlUrl(rec.session, read);
+      log(`respawned ${rec.identifier} session=${rec.session} after the usage window reset `
+        + `(attempt ${rec.attempts} of ${MAX_DISPATCH_ATTEMPTS}) — waiting for "continue" via remote control`
+        + (rec.remoteUrl ? ` at ${rec.remoteUrl}` : ''));
       resumed.push(rec);
     } catch (err) {
-      logErr(`could not resume ${rec.identifier} session ${rec.session}: ${err.message} — retrying next poll`);
+      logErr(`could not respawn ${rec.identifier} session ${rec.session}: ${err.message} — retrying next poll`);
       keep.push(rec);
     }
   }
@@ -900,7 +889,7 @@ function resumeAfterLimit(runResume = defaultResume, read = defaultAgentsRead, s
     }
     writeFileSync(RUNNING_PATH, JSON.stringify(watched, null, 2));
   }
-  return { resumed, selfRestored };
+  return { resumed, selfRestored: [] };
 }
 
 // What the resumed session is told. It has its own transcript, so this says what CHANGED — the window
@@ -913,37 +902,38 @@ function resumePrompt(rec) {
     + `create a second branch or worktree.`;
 }
 
-// The registry lists sessions by an 8-char short id; --resume wants the full UUID. Resuming by the
-// short id, or from launchd's cwd "/", makes the CLI start a brand-new session instead (2026-09-12,
-// APL-87: "resumed" 8b56d07d became a fresh b9bc6f60 in "/"). So: full id, the repo as cwd, and the
-// same PATH and permission mode dispatch uses. Returns the id the CLI reports it backgrounded.
-function fullSessionId(session, read = defaultAgentsRead) {
-  const hit = (readAgents(read) || []).find((a) => a && String(a.id || '') === session);
-  return (hit && hit.sessionId) || session;
-}
-
-function resumeArgv(fullId, prompt) {
-  return ['--background', '--permission-mode', 'auto', '--resume', fullId, prompt];
-}
-
-// A limit-killed session usually lingers in the registry as `blocked`, and the CLI treats a registered
-// session as running: --resume then starts a copy (a32900ea, 2026-09-12). `claude stop` keeps the
-// conversation and "`claude --resume` works once it is stopped", so stop an idle one first. A `working`
-// one is left alone; if the CLI copies it anyway, resumeAfterLimit stops the copy.
-function defaultResume(session, prompt, read = defaultAgentsRead) {
-  const hit = (readAgents(read) || []).find((a) => a && String(a.id || '') === session);
-  if (hit && !isWorking(hit)) {
-    try { defaultStop(session); } catch { /* already stopped */ }
-  }
-  const out = execFileSync(CLAUDE_BIN, resumeArgv((hit && hit.sessionId) || session, prompt), {
+// `claude --background --resume <id>` never continues a limit-killed session: from launchd's "/" it
+// started a fresh session, and from the repo — full UUID, the session stopped first — it forked a copy
+// under a new id every time (b9bc6f60, a32900ea, 2ccbba80 on 2026-09-12). `claude respawn <id>` is the
+// only command that brings the SAME session back. It takes no prompt and the CLI has no way to type
+// into a background session, so the human sends "continue" through the session's remote-control link,
+// which the resume comment carries.
+function defaultResume(session) {
+  return execFileSync(CLAUDE_BIN, respawnArgv(session), {
     cwd: REPO_PATH,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
     timeout: 30_000,
     env: { ...process.env, PATH: [...PATH_PREPEND, process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin'].join(':') },
   });
-  const m = /backgrounded\s+·\s+(\S+)/.exec(out || '');
-  return m ? m[1] : null;
+}
+
+function respawnArgv(session) {
+  return ['respawn', session];
+}
+
+// The remote-control link a session announces in its own transcript (a `bridge_status` line).
+function remoteControlUrl(session, read = defaultAgentsRead) {
+  try {
+    const hit = (readAgents(read) || []).find((a) => a && String(a.id || '') === session);
+    const full = (hit && hit.sessionId) || session;
+    const cwd = (hit && hit.cwd) || REPO_PATH;
+    const file = join(homedir(), '.claude', 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'), `${full}.jsonl`);
+    const urls = readFileSync(file, 'utf8').match(/https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+/g);
+    return urls ? urls[urls.length - 1] : null;
+  } catch {
+    return null;
+  }
 }
 
 function defaultStop(session) {
@@ -1026,8 +1016,10 @@ async function poll() {
       try {
         await comment(
           rec.issueId,
-          `▶️ **Resumed.** The usage window reset, so session \`${rec.session}\` was continued in `
-            + `place — same session, same branch, same worktree — rather than re-dispatched.\n\n`
+          `▶️ **Respawned.** The usage window reset, so session \`${rec.session}\` was brought back in `
+            + `place — same session, same branch, same worktree — rather than re-dispatched. It is idle until `
+            + `someone sends **continue**`
+            + (rec.remoteUrl ? ` at ${rec.remoteUrl}` : ` (\`claude attach ${rec.session}\`)`) + `.\n\n`
             + `Attempt ${rec.attempts} of ${MAX_DISPATCH_ATTEMPTS}.`
         );
       } catch (err) {
@@ -1115,7 +1107,7 @@ async function poll() {
 // and it is only checkable if it can be called.
 export { workflowFor, buildDispatchArgv, splitCommand, DEFAULT_DISPATCH, dispatchBudget, readClaudeExpiry,
   countRunningSessions, concurrencySlots, busySessionIds, parseLimitReset, cooldownRemaining,
-  agentState, isWorking, findSessionByKey, liveSessionFor, parkForResume, resumeAfterLimit, resumePrompt, resumeArgv, fullSessionId, isBlocked,
+  agentState, isWorking, findSessionByKey, liveSessionFor, parkForResume, resumeAfterLimit, resumePrompt, respawnArgv, remoteControlUrl, isBlocked,
   blockerKeys };
 
 // Run only when executed directly, not when imported.

@@ -13,7 +13,7 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert';
-import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 // parkForResume() and resumeAfterLimit() WRITE state files, so the state dir is redirected before
@@ -24,7 +24,7 @@ process.env.CYCLER_HOME = DIR;
 
 const POLLER = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'poller', 'poller.mjs');
 const { parseLimitReset, cooldownRemaining, busySessionIds, parkForResume, resumeAfterLimit,
-  resumePrompt, resumeArgv, fullSessionId } =
+  resumePrompt, respawnArgv, remoteControlUrl } =
   await import(POLLER + '?cool=1');
 assert.notStrictEqual(DIR, join(process.env.HOME || '', '.cycler'), 'the test is writing to the real state dir');
 
@@ -171,45 +171,40 @@ t('resumeAfterLimit continues the SAME session rather than dispatching a new one
     'the resumed session is not watched, so a second limit in the new window goes unnoticed');
 });
 
-t('resume is ALWAYS called; a copy the CLI starts for an already-running session is stopped', () => {
+t('resume is ALWAYS attempted, even when the session already looks alive', () => {
   writeFileSync(join(DIR, 'resume.json'), JSON.stringify(
     [{ session: 'e416007a', issueId: 'i1', identifier: 'APL-84', workflow: '/w', attempts: 2 }]));
   writeFileSync(join(DIR, 'running.json'), '[]');
-  const calls = [], stopped = [];
+  const calls = [];
   const agents = () => JSON.stringify([{ id: 'e416007a', name: '[APL-84] Sidebar', state: 'working' }]);
-  const out = resumeAfterLimit((s) => { calls.push(s); return 'b9bc6f60'; }, agents, (id) => stopped.push(id));
-  assert.strictEqual(calls.length, 1, 'resume was skipped');
-  assert.deepStrictEqual(stopped, ['b9bc6f60'], 'the duplicate copy was left running');
-  assert.strictEqual(out.selfRestored.length, 1);
-  assert.deepStrictEqual(JSON.parse(readFileSync(join(DIR, 'resume.json'), 'utf8')), []);
+  const out = resumeAfterLimit((s) => calls.push(s), agents);
+  assert.deepStrictEqual(calls, ['e416007a'], 'resume was skipped for a session that looked alive');
+  assert.strictEqual(out.resumed.length, 1);
 });
 
-t('a copy started for a DEAD session is stopped and the resume retried (the 0.2.11 b9bc6f60 bug)', () => {
-  writeFileSync(join(DIR, 'resume.json'), JSON.stringify(
-    [{ session: '8b56d07d', issueId: 'i1', identifier: 'APL-87', workflow: '/w', attempts: 2 }]));
-  writeFileSync(join(DIR, 'running.json'), '[]');
-  const stopped = [];
-  const out = resumeAfterLimit(() => 'b9bc6f60', () => '[]', (id) => stopped.push(id));
-  assert.deepStrictEqual(stopped, ['b9bc6f60']);
-  assert.strictEqual(out.resumed.length, 0, 'a new session was counted as a resume');
-  assert.strictEqual(JSON.parse(readFileSync(join(DIR, 'resume.json'), 'utf8')).length, 1);
-});
-
-t('resume uses the FULL session UUID, auto permissions, and runs from the repo', () => {
-  const agents = () => JSON.stringify([{ id: '8b56d07d', sessionId: '8b56d07d-4184-49fe-86b2-04a9b1981c49' }]);
-  assert.strictEqual(fullSessionId('8b56d07d', agents), '8b56d07d-4184-49fe-86b2-04a9b1981c49');
-  const argv = resumeArgv('8b56d07d-4184-49fe-86b2-04a9b1981c49', 'go');
-  assert.deepStrictEqual(argv.slice(argv.indexOf('--resume'), argv.indexOf('--resume') + 2),
-    ['--resume', '8b56d07d-4184-49fe-86b2-04a9b1981c49']);
-  assert.ok(argv.includes('--background'));
-  assert.match(argv.join(' '), /--permission-mode auto/);
+t('resume RESPAWNS the same session — --resume forks a copy under a new id', () => {
+  assert.deepStrictEqual(respawnArgv('8b56d07d'), ['respawn', '8b56d07d']);
   const src = readFileSync(POLLER, 'utf8');
   const fn = /function defaultResume[\s\S]*?\n}\n/.exec(src)[0];
-  assert.match(fn, /cwd: REPO_PATH/, 'launchd cwd is "/" — the CLI starts a new session there');
-  assert.match(fn, /PATH_PREPEND/);
-  assert.match(fn, /sessionId/);
-  assert.match(fn, /!isWorking\(hit\)[\s\S]*defaultStop\(session\)[\s\S]*resumeArgv/,
-    'an idle registered session is not stopped before --resume, so the CLI starts a copy');
+  assert.doesNotMatch(fn, /--resume/, '--resume started b9bc6f60, a32900ea and 2ccbba80 instead of continuing');
+  assert.match(fn, /respawnArgv\(/);
+  assert.match(fn, /cwd: REPO_PATH/);
+});
+
+t('the resume comment carries the remote-control link the human types "continue" into', () => {
+  const home = mkdtempSync(join(tmpdir(), 'cycler-home-'));
+  const prev = process.env.HOME; process.env.HOME = home;
+  try {
+    const cwd = '/r/app';
+    const dir = join(home, '.claude', 'projects', '-r-app');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'u-u-i-d.jsonl'),
+      '{"url":"https://claude.ai/code/session_OLD"}\n{"url":"https://claude.ai/code/session_NEW1"}\n');
+    const agents = () => JSON.stringify([{ id: 'abcd1234', sessionId: 'u-u-i-d', cwd }]);
+    assert.strictEqual(remoteControlUrl('abcd1234', agents), 'https://claude.ai/code/session_NEW1');
+    assert.strictEqual(remoteControlUrl('missing', () => '[]'), null);
+  } finally { process.env.HOME = prev; }
+  assert.match(readFileSync(POLLER, 'utf8'), /send[\s\S]{0,40}\*\*continue\*\*[\s\S]{0,40}remoteUrl/);
 });
 
 t('poll() counts resumed sessions against max_concurrent', () => {

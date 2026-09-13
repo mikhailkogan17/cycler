@@ -1,7 +1,7 @@
 {
   "name": "cycler",
   "description": "Delegate a Linear issue to Claude and get a gated PR back. A local poller dispatches a background Claude Code session; a contract-first harness implements, gates, opens the PR and reports on the issue. No webhook, no tunnel, no cloud.",
-  "version": "0.2.13",
+  "version": "0.2.14",
   "author": { "name": "Mikhail Kogan" },
   "homepage": "https://github.com/mikhailkogan17/cycler",
   "license": "MIT",
