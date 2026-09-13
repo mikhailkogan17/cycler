@@ -763,40 +763,148 @@ function cooldownRemaining(state, now = Date.now()) {
   return Number.isFinite(until) && until > now ? until - now : 0;
 }
 
-// The tail is enough: the limit message is the last thing a killed session prints.
-function defaultLogsRead(id) {
-  return execFileSync(CLAUDE_BIN, ['logs', id],
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, maxBuffer: 4 << 20 });
+// The session's own transcript, not `claude logs`. The logs are a redrawn terminal screen: a limit line
+// from hours ago stays on it after the session was respawned and carried on, and re-reading it parked
+// APL-87 behind a fake 6-hour cooldown on 2026-09-12. The transcript is append-only and every entry is
+// timestamped, so "is the LAST thing this session did a limit error, and is it newer than the watch" has
+// one deterministic answer.
+function transcriptFile(session, agent) {
+  const full = (agent && agent.sessionId) || session;
+  const cwd = (agent && agent.cwd) || REPO_PATH;
+  return join(homedir(), '.claude', 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'), `${full}.jsonl`);
 }
 
-// Sessions this poller started, still being watched. Anything that has stopped being busy is read
-// once for a limit message and then forgotten — a session that ended for any other reason leaves
-// no trace here, which is the point: only a limit holds the queue.
-function reviewRunning(readLogs = defaultLogsRead, busyIds = null) {
+function defaultTranscriptRead(rec, agent) {
+  return readFileSync(transcriptFile(rec.session, agent), 'utf8');
+}
+
+function entryText(e) {
+  const c = e && e.message && e.message.content;
+  if (typeof c === 'string') return c;
+  if (!Array.isArray(c)) return '';
+  return c.filter((x) => x && x.type === 'text').map((x) => x.text).join('\n');
+}
+
+// limited  — the last assistant entry is the CLI's synthetic limit error, written after `sinceMs`
+// turn     — the last assistant entry ended its turn normally (a question for a human, or a final report)
+// working  — anything else (mid tool call, empty, unparseable)
+function classifyTranscript(text, sinceMs = 0) {
+  let last = null;
+  for (const line of String(text || '').split('\n')) {
+    if (!line.trim()) continue;
+    let e;
+    try { e = JSON.parse(line); } catch { continue; }
+    if (e && e.type === 'assistant' && !e.isSidechain) last = e;
+  }
+  if (!last) return { kind: 'working' };
+  const ts = Date.parse(last.timestamp) || 0;
+  const body = entryText(last);
+  if (last.isApiErrorMessage && LIMIT_RE.test(body)) {
+    return ts >= sinceMs ? { kind: 'limited', text: body, at: ts, uuid: last.uuid } : { kind: 'working' };
+  }
+  if (last.message && last.message.stop_reason === 'end_turn' && body.trim()) {
+    return { kind: 'turn', text: body, at: ts, uuid: last.uuid };
+  }
+  return { kind: 'working' };
+}
+
+// States after which a session never acts again. `done`, `idle` and `blocked` are NOT here: those
+// sessions still exist and resume the moment someone answers them.
+const AGENT_GONE_STATES = new Set(['stopped', 'killed', 'failed', 'error', 'canceled', 'cancelled']);
+
+// Every watched session gets exactly one verdict per poll:
+//   busy                         → keep watching
+//   limit error newer than watch → park for resume, hold the queue until the reset
+//   ended a turn, still exists   → waiting on a human: notify ONCE per message, keep watching
+//   gone / stopped / issue closed → finished: stop watching
+// Nothing is dropped just because it went quiet — that is how a session waiting on a question used to
+// vanish from running.json and sit unanswered.
+function reviewRunning({ agents = readAgents(defaultAgentsRead), readTranscript = defaultTranscriptRead,
+  issueStates = new Map(), now = Date.now() } = {}) {
   const watched = loadJson(RUNNING_PATH, []);
-  if (!watched.length) return { state: null, limited: [] };
+  const none = { state: null, limited: [], waiting: [], finished: [] };
+  if (!watched.length) return none;
+  // An unreadable registry decides nothing: every verdict below depends on it.
+  if (agents === null) return none;
+  const byId = new Map(agents.filter(Boolean).map((a) => [String(a.id || ''), a]));
   const keep = [];
   const limited = [];
+  const waiting = [];
+  const finished = [];
   let hold = null;
   for (const rec of watched) {
-    if (busyIds && rec.session && busyIds.has(rec.session)) { keep.push(rec); continue; }
-    let out = '';
-    try { out = readLogs(rec.session); } catch { /* gone, or unreadable — either way stop watching */ }
-    const until = parseLimitReset(out);
-    if (until !== null) {
+    const agent = byId.get(rec.session);
+    const issueState = issueStates.get(rec.issueId);
+    if (['completed', 'canceled'].includes(issueState)) { finished.push(rec); continue; }
+    if (agent && isWorking(agent)) { keep.push(rec); continue; }
+    let verdict = { kind: 'working' };
+    try { verdict = classifyTranscript(readTranscript(rec, agent), Number(rec.at) || 0); } catch { /* unreadable */ }
+    if (verdict.kind === 'limited') {
+      // Reset is computed from when the limit was HIT, not from now: read late, "resets 1am" must not
+      // roll over to tomorrow's 1am.
+      const until = parseLimitReset(verdict.text, verdict.at || now);
       logErr(`${rec.identifier} (session ${rec.session}) ended on the account's usage limit`);
       hold = Math.max(hold || 0, until);
       limited.push(rec);
+      continue;
     }
+    if (!agent || AGENT_GONE_STATES.has(agentState(agent))) { finished.push(rec); continue; }
+    if (verdict.kind === 'turn' && rec.notified !== verdict.uuid) {
+      rec.notified = verdict.uuid;
+      waiting.push({ ...rec, question: verdict.text, remoteUrl: remoteControlUrl(rec.session, () => JSON.stringify(agents)) });
+    }
+    keep.push(rec);
   }
   writeFileSync(RUNNING_PATH, JSON.stringify(keep, null, 2));
-  if (hold === null) return { state: null, limited: [] };
-  const state = { until: hold, reason: 'a dispatched session ended on the account usage limit', at: Date.now() };
-  writeFileSync(COOLDOWN_PATH, JSON.stringify(state, null, 2));
+  for (const rec of finished) log(`${rec.identifier} session ${rec.session} finished — no longer watched`);
+  if (hold === null) return { ...none, waiting, finished };
+  // A hold already in the past still parks the session; resumeAfterLimit() then runs in this same poll.
+  const state = { until: hold, reason: 'a dispatched session ended on the account usage limit', at: now };
+  if (hold > now) writeFileSync(COOLDOWN_PATH, JSON.stringify(state, null, 2));
   // The records come back rather than being acted on here: writing processed.json and posting to
   // Linear are the caller's jobs, and keeping them out of this function is what lets the cooldown
   // logic stay testable without a network.
-  return { state, limited };
+  return { state, limited, waiting, finished };
+}
+
+// Sessions nobody should be running:
+//   - copies named after the resume prompt (a `--resume` that forked instead of continuing)
+//   - a second live `[KEY]` session for an issue whose watched session still exists
+// Stopped, never removed: `claude stop` keeps the conversation, so a wrong call costs nothing.
+const GHOST_NAME_PREFIX = "The account's Claude usage window";
+function findGhosts(agents, watched) {
+  if (!Array.isArray(agents)) return [];
+  const live = (a) => a && !AGENT_GONE_STATES.has(agentState(a)) && agentState(a) !== 'done';
+  const ids = new Set(agents.map((a) => a && String(a.id || '')));
+  const owner = new Map(watched.filter((r) => ids.has(r.session)).map((r) => [r.identifier, r.session]));
+  const ghosts = [];
+  for (const a of agents.filter(live)) {
+    const name = String(a.name || '');
+    const id = String(a.id || '');
+    if (name.startsWith(GHOST_NAME_PREFIX)) { ghosts.push({ id, name, why: 'copy forked from a resume prompt' }); continue; }
+    const key = (name.match(/^\[([A-Z][A-Z0-9]*-\d+)\]/) || [])[1];
+    if (key && owner.has(key) && owner.get(key) !== id) {
+      ghosts.push({ id, name, why: `duplicate of watched ${key} session ${owner.get(key)}` });
+    }
+  }
+  return ghosts;
+}
+
+function reapGhosts(agents, stop = defaultStop) {
+  const reaped = [];
+  for (const g of findGhosts(agents, loadJson(RUNNING_PATH, []))) {
+    try { stop(g.id); log(`stopped ghost session ${g.id} (${g.why}): ${g.name.slice(0, 80)}`); reaped.push(g); }
+    catch (err) { logErr(`could not stop ghost session ${g.id}: ${err.message}`); }
+  }
+  return reaped;
+}
+
+// A desktop notification in addition to the Linear comment — a question on the board is easy to miss.
+function notifyDesktop(title, body) {
+  try {
+    execFileSync('/usr/bin/osascript', ['-e', `display notification ${JSON.stringify(body.slice(0, 200))} with title ${JSON.stringify(title)}`],
+      { stdio: 'ignore', timeout: 5_000 });
+  } catch { /* not macOS, or no GUI session */ }
 }
 
 // A session the usage limit killed did not finish its issue — but it is NOT dead. It holds the whole
@@ -926,10 +1034,7 @@ function respawnArgv(session) {
 function remoteControlUrl(session, read = defaultAgentsRead) {
   try {
     const hit = (readAgents(read) || []).find((a) => a && String(a.id || '') === session);
-    const full = (hit && hit.sessionId) || session;
-    const cwd = (hit && hit.cwd) || REPO_PATH;
-    const file = join(homedir(), '.claude', 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'), `${full}.jsonl`);
-    const urls = readFileSync(file, 'utf8').match(/https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+/g);
+    const urls = readFileSync(transcriptFile(session, hit), 'utf8').match(/https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+/g);
     return urls ? urls[urls.length - 1] : null;
   } catch {
     return null;
@@ -974,9 +1079,26 @@ async function poll() {
     log('claude credential is stale — dispatching one issue this poll so a single session performs '
       + 'the refresh; the rest go out on the next poll');
   }
+  const agents = readAgents(defaultAgentsRead);
+  reapGhosts(agents);
   let running = countRunningSessions();
-  // Read once a session stops being busy: did it stop because the account's window ran out?
-  const review = reviewRunning(defaultLogsRead, busySessionIds());
+  const issueStates = new Map(issues.nodes.map((i) => [i.id, i.state?.type]));
+  const review = reviewRunning({ agents, issueStates });
+  for (const rec of review.waiting) {
+    const excerpt = rec.question.length > 1200 ? `…${rec.question.slice(-1200)}` : rec.question;
+    try {
+      await comment(
+        rec.issueId,
+        `🙋 **Waiting for you.** Session \`${rec.session}\` stopped and is waiting for a reply:\n\n`
+          + excerpt.split('\n').map((l) => `> ${l}`).join('\n') + '\n\n'
+          + `Answer ${rec.remoteUrl ? `at ${rec.remoteUrl}` : `with \`claude attach ${rec.session}\``}.`
+      );
+    } catch (err) {
+      logErr(`${rec.identifier} is waiting on a human but could not comment: ${err.message}`);
+    }
+    notifyDesktop(`cycler: ${rec.identifier} is waiting`, rec.question.trim().split('\n').pop() || '');
+    log(`${rec.identifier} session ${rec.session} is waiting on a human${rec.remoteUrl ? ` — ${rec.remoteUrl}` : ''}`);
+  }
   if (review.limited.length) {
     const resumesAt = new Date(review.state.until);
     for (const rec of parkForResume(review.limited, review.state.until)) {
@@ -1009,7 +1131,7 @@ async function poll() {
   if (cooling === 0) {
     // The window is open again. Parked sessions go first: they are half-finished runs, and resuming
     // one costs less than the fresh dispatch that would otherwise take the same slot.
-    const { resumed, selfRestored } = resumeAfterLimit();
+    const { resumed } = resumeAfterLimit();
     // A resumed session occupies a slot now, even if the registry has not caught up yet.
     if (running !== null) running += resumed.length;
     for (const rec of resumed) {
@@ -1024,17 +1146,6 @@ async function poll() {
         );
       } catch (err) {
         logErr(`resumed ${rec.identifier} but could not comment: ${err.message}`);
-      }
-    }
-    for (const rec of selfRestored) {
-      try {
-        await comment(
-          rec.issueId,
-          `▶️ **Running again.** Session \`${rec.session}\` restored itself when the usage window `
-            + `reset, so the poller left it alone rather than starting a second run.`
-        );
-      } catch (err) {
-        logErr(`${rec.identifier} self-restored but could not comment: ${err.message}`);
       }
     }
   }
@@ -1108,6 +1219,7 @@ async function poll() {
 export { workflowFor, buildDispatchArgv, splitCommand, DEFAULT_DISPATCH, dispatchBudget, readClaudeExpiry,
   countRunningSessions, concurrencySlots, busySessionIds, parseLimitReset, cooldownRemaining,
   agentState, isWorking, findSessionByKey, liveSessionFor, parkForResume, resumeAfterLimit, resumePrompt, respawnArgv, remoteControlUrl, isBlocked,
+  classifyTranscript, reviewRunning, findGhosts, reapGhosts,
   blockerKeys };
 
 // Run only when executed directly, not when imported.
