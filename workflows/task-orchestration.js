@@ -44,7 +44,7 @@
 // — a comment naming the stage, lastFailure and fixLog on every blocked return, with the issue moved back
 // to Todo. An unattended run that fails silently is worse than one that never started; the Linear comment
 // is the only channel that reaches a human who is not watching the chat.
-// Every write is idempotent (marker-comment guarded) and NON-FATAL: a Linear failure is recorded in the
+// Every write is idempotent (guarded by an identical-body check) and NON-FATAL: a Linear failure is recorded in the
 // result's `linear` log, never a reason to fail the task. Disable with args.linear: false.
 // APL-37: unattended runs. `unattended: true` is the "one line, then walk away" mode — it refuses to
 // stop for a human (stopAtContract is forced off; a question goes to the tracker and the run exits),
@@ -468,7 +468,7 @@ const FOLLOWUPS_SCHEMA = {
 //
 // The contract the CALLER must honour (see HARNESS.md -> Linear round-trip):
 //   1. NEVER fail the task over Linear. A board outage must not turn a green run red.
-//   2. NEVER duplicate. Each write carries an HTML-comment marker; check for it (list_comments)
+//   2. NEVER duplicate. Check for an identical comment body (list_comments)
 //      before posting, so a resumed or re-run workflow does not spam the issue.
 //   3. NEVER hardcode workflow state names — resolve them with list_issue_statuses and match by TYPE.
 //   4. Never move the issue to Done. The harness does not merge, so only the human who merges can
@@ -479,7 +479,7 @@ const linearEnabled = !linearOff && linearKey !== ''
 // planned — an empty array and a disabled round-trip must not look the same.
 const linearWrites = []
 
-// kind      — stable slug; becomes the idempotency marker for this write
+// kind      — stable slug naming this write in the result
 // stateType — 'started' | 'unstarted' | 'completed', to be resolved to a real workflow state BY TYPE
 // body      — markdown comment body (omit for a state/link-only write)
 // links     — [{ url, title }] attachments
@@ -488,17 +488,16 @@ function linearSync(kind, { stateType, statePreference, body, links, assignSelf 
     linearWrites.push({ kind, skipped: true, note: linearOff ? 'args.linear: false' : 'no Linear issue key for this run' })
     return null
   }
-  const marker = `<!-- harness:${linearKey}:${kind} -->`
   linearWrites.push({
     kind,
     issue: linearKey,
-    marker,
     stateType: stateType || null,
     statePreference: statePreference || null,
     assignSelf: assignSelf === true,
     links: links || [],
-    // The marker leads the body so the caller can match on it verbatim.
-    body: body ? `${marker}\n${body}` : null,
+    // No hidden HTML marker: it made every comment unreadable in notifications. The caller dedupes on
+    // the body text itself.
+    body: body || null,
   })
   log(`Linear write planned: ${kind}${stateType ? ` (state -> ${stateType})` : ''}${body ? ' + comment' : ''} — `
       + `the CALLER must perform it; the workflow no longer spends an agent on this.`)

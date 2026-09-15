@@ -35,15 +35,14 @@ description: The workflow a dispatched session runs for a feature, improvement o
 3. **Post a start comment before invoking the workflow** (Linear reference only):
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment list <KEY> | grep -q 'harness:<KEY>:dispatched' \
-  || "${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment add <KEY> --body '<!-- harness:<KEY>:dispatched -->
-🔧 Harness run started — contract → implement → audit → gate → PR → review. Next comment lands when the PR opens.'
+"${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment list <KEY> | grep -q 'Harness run started' \
+  || "${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment add <KEY> --body '🔧 Harness run started — contract → implement → audit → gate → PR → review. Next comment lands when the PR opens.'
 ```
 
    Every other Linear write in this skill happens in step 5, *after* the workflow returns — which is 20-40
    minutes later. Without this one the board shows nothing at all for the whole run, and a delegated issue
    sitting silent is indistinguishable from a dispatch that never fired. That ambiguity is what the poller's
-   own failure comment exists to remove; the run itself needs the same. The marker makes it idempotent, and
+   own failure comment exists to remove; the run itself needs the same. The grep makes it idempotent, and
    a failure here is never a reason not to start the workflow.
 
 4. **Read the cycler config first**, so the run uses this repo's settings rather than defaults:
@@ -104,13 +103,13 @@ Workflow({ scriptPath: '.claude/workflows/task-orchestration.js', args: {
    workflow no longer performs these itself (it used to spend 3-4 subagents per run on writes that
    failed against an unauthenticated MCP; see HARNESS.md -> Linear round-trip). You hold a working
    Linear connector, so you do them:
-   - Walk the array in order. Each entry has `kind`, `issue`, `marker`, `stateType`,
+   - Walk the array in order. Each entry has `kind`, `issue`, `stateType`,
      `statePreference`, `assignSelf`, `links[]`, `body`.
    - **Use `${CLAUDE_PLUGIN_ROOT}/poller/lin`, not the Linear MCP** (see step 2 for why): `lin issue comment list <KEY>` to
      check, `lin issue comment add <KEY> --body '...'` to write, `lin issue update <KEY> --state
      '<name-or-type>'` to move state.
-   - **Idempotency:** list the comments first and skip a write whose `marker` is already present with
-     identical text. `body` always leads with `marker`. A resumed or re-run workflow must not spam.
+   - **Idempotency:** list the comments first and skip a write whose `body` is already present as a
+     comment with identical text. Never add HTML comments or hidden markers to a body. A resumed or re-run workflow must not spam.
    - **States by TYPE:** `lin issue update` takes a state by name *or type*, so pass `statePreference`
      when set and fall back to `stateType` (`started`/`unstarted`/`completed`). Never hardcode a name
      that only exists in one team.

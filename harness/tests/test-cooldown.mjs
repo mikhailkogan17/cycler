@@ -24,7 +24,7 @@ process.env.CYCLER_HOME = DIR;
 
 const POLLER = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'poller', 'poller.mjs');
 const { parseLimitReset, cooldownRemaining, busySessionIds, parkForResume, resumeAfterLimit,
-  resumePrompt, respawnArgv, remoteControlUrl } =
+  resumePrompt, resumeArgv, remoteControlUrl } =
   await import(POLLER + '?cool=1');
 assert.notStrictEqual(DIR, join(process.env.HOME || '', '.cycler'), 'the test is writing to the real state dir');
 
@@ -182,13 +182,26 @@ t('resume is ALWAYS attempted, even when the session already looks alive', () =>
   assert.strictEqual(out.resumed.length, 1);
 });
 
-t('resume RESPAWNS the same session — --resume forks a copy under a new id', () => {
-  assert.deepStrictEqual(respawnArgv('8b56d07d'), ['respawn', '8b56d07d']);
+t('resume continues automatically under the [KEY] name and stops the old session', () => {
+  const argv = resumeArgv({ id: '8b56d07d', sessionId: 'u-1', name: '[APL-87] Flow B' }, 'go on');
+  assert.deepStrictEqual(argv.slice(-3), ['--resume', 'u-1', 'go on'], 'the continue prompt must ride the resume');
+  assert.strictEqual(argv[argv.indexOf('--name') + 1], '[APL-87] Flow B', 'a prompt-named copy is reaped as a ghost');
+  const ghostName = resumeArgv({ id: 'x', name: "The account's Claude usage window" }, 'p', 'APL-9');
+  assert.strictEqual(ghostName[ghostName.indexOf('--name') + 1], '[APL-9] resumed');
   const src = readFileSync(POLLER, 'utf8');
   const fn = /function defaultResume[\s\S]*?\n}\n/.exec(src)[0];
-  assert.doesNotMatch(fn, /--resume/, '--resume started b9bc6f60, a32900ea and 2ccbba80 instead of continuing');
-  assert.match(fn, /respawnArgv\(/);
-  assert.match(fn, /cwd: REPO_PATH/);
+  assert.match(fn, /defaultStop\(session\)/, 'the old session must be stopped, or it becomes a duplicate');
+});
+
+t('resumeAfterLimit re-watches the NEW session id the resume returns', () => {
+  writeFileSync(join(DIR, 'resume.json'), JSON.stringify(
+    [{ session: 'old11111', issueId: 'i1', identifier: 'APL-5', workflow: '/w', attempts: 1 }]));
+  writeFileSync(join(DIR, 'running.json'), '[]');
+  const out = resumeAfterLimit(() => 'new22222', () => '[]');
+  assert.strictEqual(out.resumed[0].session, 'new22222');
+  assert.strictEqual(out.resumed[0].previous, 'old11111');
+  const watched = JSON.parse(readFileSync(join(DIR, 'running.json'), 'utf8'));
+  assert.deepStrictEqual(watched.map((r) => r.session), ['new22222'], 'the old id is watched — the new session is reaped as a ghost');
 });
 
 t('the resume comment carries the remote-control link the human types "continue" into', () => {
@@ -204,7 +217,7 @@ t('the resume comment carries the remote-control link the human types "continue"
     assert.strictEqual(remoteControlUrl('abcd1234', agents), 'https://claude.ai/code/session_NEW1');
     assert.strictEqual(remoteControlUrl('missing', () => '[]'), null);
   } finally { process.env.HOME = prev; }
-  assert.match(readFileSync(POLLER, 'utf8'), /send[\s\S]{0,40}\*\*continue\*\*[\s\S]{0,40}remoteUrl/);
+  assert.match(readFileSync(POLLER, 'utf8'), /\*\*Resumed\.\*\*[\s\S]{0,400}remoteUrl/);
 });
 
 t('poll() counts resumed sessions against max_concurrent', () => {

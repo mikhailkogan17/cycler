@@ -168,13 +168,33 @@ async function refreshToken() {
 async function gqlOnce(query, variables) {
   const { access_token } = loadJson(TOKEN_PATH, {});
   if (!access_token) throw new Error('No token. Run: /cycler:start (or: node poller/poller.mjs auth)');
-  const res = await fetch('https://api.linear.app/graphql', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${access_token}` },
-    body: JSON.stringify({ query, variables }),
-  });
-  return res.json();
+  // A dropped connection, a 429 or a 5xx is transient. Retried in-process with backoff so one blip does
+  // not cost a whole 180s poll; after the last attempt it throws and the next poll starts over.
+  let lastErr;
+  for (let attempt = 0; attempt < GQL_ATTEMPTS; attempt++) {
+    if (attempt) await new Promise((r) => setTimeout(r, lastErr.waitMs));
+    try {
+      const res = await fetch('https://api.linear.app/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${access_token}` },
+        body: JSON.stringify({ query, variables }),
+      });
+      const http = res['status'];
+      if (http === 429 || http >= 500) {
+        const after = Number(res.headers.get('retry-after'));
+        lastErr = new Error(`Linear HTTP ${http}`);
+        lastErr.waitMs = Math.min(Number.isFinite(after) && after > 0 ? after * 1000 : 2000 * 2 ** attempt, 30_000);
+        continue;
+      }
+      return await res.json();
+    } catch (err) {
+      lastErr = err;
+      lastErr.waitMs = 2000 * 2 ** attempt;
+    }
+  }
+  throw lastErr;
 }
+const GQL_ATTEMPTS = 4;
 
 async function gql(query, variables = {}, retried = false) {
   const json = await gqlOnce(query, variables);
@@ -400,11 +420,12 @@ async function dispatch(issue) {
 // recorded as successful. The failure comment that exists for a failed SPAWN had no counterpart for
 // a failed START.
 //
-// The proof of life is the start marker `<!-- harness:<KEY>:... -->` that every routable skill posts
+// The proof of life is the session's own transcript: a real model reply after dispatch. It used to be a
+// start comment every routable skill posted
 // as its first act (skills/workflow-feature step 3, skills/workflow-research step 1b). It is checked here, on a LATER
 // poll, because the check has to outlive the poll that dispatched: asking immediately would only ever
 // see a session that has not got there yet.
-async function checkLiveness() {
+async function checkLiveness(readAgentsRaw = defaultAgentsRead, readTranscript = defaultTranscriptRead) {
   const pending = loadJson(PENDING_PATH, []);
   if (!pending.length) return;
   const now = Date.now();
@@ -414,24 +435,23 @@ async function checkLiveness() {
   const processed = new Set(loadJson(STATE_PATH, []));
   const keep = pending.filter((r) => now - r.at < START_GRACE_MS);
   let stateChanged = false;
+  // Could not tell either way: keep waiting rather than declare a live run dead — a false "dead"
+  // costs a duplicate session on the same branch, which is the one thing worse than silence.
+  const agents = readAgents(readAgentsRaw);
+  if (agents === null) {
+    logErr('liveness check skipped: the session registry is unreadable');
+    writeFileSync(PENDING_PATH, JSON.stringify(pending, null, 2));
+    return;
+  }
 
   for (const rec of due) {
-    let comments;
-    try {
-      ({ issue: { comments } } = await gql(
-        'query ($id: String!) { issue(id: $id) { comments(first: 50) { nodes { body } } } }',
-        { id: rec.issueId }
-      ));
-    } catch (err) {
-      // Could not tell either way. Keep waiting rather than declare a live run dead — a false
-      // "dead" costs a duplicate session on the same branch, which is the one thing worse than
-      // silence.
-      logErr(`liveness check failed for ${rec.identifier}: ${err.message}`);
-      keep.push(rec);
-      continue;
-    }
-
-    if (comments.nodes.some((c) => c.body.includes(`harness:${rec.identifier}:`))) {
+    const agent = agentFor(rec, agents);
+    let transcript = '';
+    if (agent) { try { transcript = readTranscript({ session: String(agent.id) }, agent); } catch { transcript = ''; } }
+    const verdict = livenessVerdict(agent, transcript, rec.at);
+    if (verdict === 'unknown') { keep.push(rec); continue; }
+    if (verdict === 'alive') {
+      if (agent && agent.id) rec.session = String(agent.id);
       log(`liveness ok: ${rec.identifier} session=${rec.session || 'unknown'} started`);
       // Confirmed alive, so this record's job here is done — but the session now has to be watched
       // for how it ENDS, which is a different question and a much later one. See reviewRunning().
@@ -462,15 +482,15 @@ async function checkLiveness() {
     const attempts = (rec.attempts || 1);
     const giveUp = attempts >= MAX_DISPATCH_ATTEMPTS;
     logErr(
-      `dead dispatch: ${rec.identifier} session=${rec.session || 'unknown'} posted no start marker ` +
+      `dead dispatch: ${rec.identifier} session=${rec.session || 'unknown'} never replied ` +
         `within ${START_GRACE_MS / 1000}s (attempt ${attempts}/${MAX_DISPATCH_ATTEMPTS})`
     );
     try {
       await comment(
         rec.issueId,
         `⚠️ **Dispatched session never started.** \`${rec.identifier}\` was handed to ` +
-          `\`${rec.workflow}\`${rec.session ? ` as session \`${rec.session}\`` : ''}, but it posted no ` +
-          `start marker within ${START_GRACE_MS / 1000}s — so it spawned and then died, rather than ` +
+          `\`${rec.workflow}\`${rec.session ? ` as session \`${rec.session}\`` : ''}, but its transcript shows no ` +
+          `reply within ${START_GRACE_MS / 1000}s — so it spawned and then died, rather than ` +
           `never being seen.\n\n` +
           `Most likely: the \`claude\` CLI login expired. Check with \`claude --print "ok"\`; ` +
           `if it fails, run \`/login\` in an interactive terminal.\n\n` +
@@ -494,6 +514,40 @@ async function checkLiveness() {
 
   if (stateChanged) writeFileSync(STATE_PATH, JSON.stringify([...processed], null, 2));
   writeFileSync(PENDING_PATH, JSON.stringify(keep, null, 2));
+}
+
+// The session a pending record refers to: by id, else the newest `[KEY]`-named one (dispatch may
+// not have printed an id).
+function agentFor(rec, agents) {
+  if (rec.session) {
+    const byId = agents.find((a) => a && (String(a.id || '') === rec.session || a.sessionId === rec.session));
+    if (byId) return byId;
+  }
+  return agents
+    .filter((a) => a && String(a.name || '').startsWith(`[${rec.identifier}]`))
+    .sort((a, b) => (Number(b.startedAt) || 0) - (Number(a.startedAt) || 0))[0] || null;
+}
+
+// Did the dispatched session actually run? Answered from the session's own transcript, not from
+// Linear: no comment, label or emoji can fake it.
+//   alive   — a real model reply (or a usage-limit stop, which the watchdog handles) after dispatch
+//   dead    — the session is gone, or all it produced after dispatch were API errors (expired login)
+//   unknown — it exists and has not replied yet: keep waiting
+function livenessVerdict(agent, transcript, sinceMs = 0) {
+  if (!agent) return 'dead';
+  let reply = false;
+  let apiError = false;
+  for (const line of String(transcript || '').split('\n')) {
+    if (!line.trim()) continue;
+    let e;
+    try { e = JSON.parse(line); } catch { continue; }
+    if (!e || e.type !== 'assistant' || e.isSidechain) continue;
+    if ((Date.parse(e.timestamp) || 0) < sinceMs) continue;
+    if (!e.isApiErrorMessage || LIMIT_RE.test(entryText(e))) reply = true; else apiError = true;
+  }
+  if (reply) return 'alive';
+  if (apiError || AGENT_GONE_STATES.has(agentState(agent))) return 'dead';
+  return 'unknown';
 }
 
 // ── The refresh race ─────────────────────────────────────────────────────────────────────────
@@ -636,6 +690,7 @@ function isWorking(a) {
 }
 
 function defaultAgentsRead() {
+  if (process.env.CYCLER_AGENTS_FILE) return readFileSync(process.env.CYCLER_AGENTS_FILE, 'utf8');
   return execFileSync(CLAUDE_BIN, ['agents', '--json'],
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 });
 }
@@ -967,16 +1022,19 @@ function resumeAfterLimit(runResume = defaultResume, read = defaultAgentsRead) {
   if (!parked.length) return { resumed: [], selfRestored: [] };
   const keep = [];
   const resumed = [];
+  const agents = readAgents(read) || [];
   for (const rec of parked) {
     try {
-      runResume(rec.session, resumePrompt(rec));
+      const agent = agents.find((a) => a && String(a.id || '') === rec.session);
+      const carried = runResume(rec.session, resumePrompt(rec),
+        agent || { id: rec.session, name: `[${rec.identifier}] resumed` });
+      if (typeof carried === 'string' && carried) { rec.previous = rec.session; rec.session = carried; }
       rec.remoteUrl = remoteControlUrl(rec.session, read);
-      log(`respawned ${rec.identifier} session=${rec.session} after the usage window reset `
-        + `(attempt ${rec.attempts} of ${MAX_DISPATCH_ATTEMPTS}) — waiting for "continue" via remote control`
-        + (rec.remoteUrl ? ` at ${rec.remoteUrl}` : ''));
+      log(`resumed ${rec.identifier} session=${rec.session}${rec.previous ? ` (was ${rec.previous}, stopped)` : ''} `
+        + `after the usage window reset (attempt ${rec.attempts} of ${MAX_DISPATCH_ATTEMPTS}) — continuing automatically`);
       resumed.push(rec);
     } catch (err) {
-      logErr(`could not respawn ${rec.identifier} session ${rec.session}: ${err.message} — retrying next poll`);
+      logErr(`could not resume ${rec.identifier} session ${rec.session}: ${err.message} — retrying next poll`);
       keep.push(rec);
     }
   }
@@ -1010,24 +1068,32 @@ function resumePrompt(rec) {
     + `create a second branch or worktree.`;
 }
 
-// `claude --background --resume <id>` never continues a limit-killed session: from launchd's "/" it
-// started a fresh session, and from the repo — full UUID, the session stopped first — it forked a copy
-// under a new id every time (b9bc6f60, a32900ea, 2ccbba80 on 2026-09-12). `claude respawn <id>` is the
-// only command that brings the SAME session back. It takes no prompt and the CLI has no way to type
-// into a background session, so the human sends "continue" through the session's remote-control link,
-// which the resume comment carries.
-function defaultResume(session) {
-  return execFileSync(CLAUDE_BIN, respawnArgv(session), {
-    cwd: REPO_PATH,
+// Resume after a usage limit, WITHOUT a human. `claude respawn` keeps the id but cannot take a prompt, so
+// the session sat idle until someone typed "continue". Instead the conversation is resumed with the
+// continue prompt, under the issue's `[KEY]` name, and the old session is stopped — so there is exactly
+// one live session per issue and the ghost reaper recognises the new one as the owner, never a copy
+// (b9bc6f60, a32900ea, 2ccbba80 were copies because the old session kept running and the name was the
+// prompt). Returns the id that now carries the run.
+function defaultResume(session, prompt, agent) {
+  const argv = resumeArgv(agent || { id: session }, prompt);
+  const out = execFileSync(CLAUDE_BIN, argv, {
+    cwd: (agent && agent.cwd) || REPO_PATH,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
     timeout: 30_000,
     env: { ...process.env, PATH: [...PATH_PREPEND, process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin'].join(':') },
   });
+  const m = out.match(/backgrounded\s+·\s+(\S+)/);
+  if (!m) throw new Error(`resume printed no session id: ${out.trim().split('\n')[0] || 'no output'}`);
+  try { defaultStop(session); } catch { /* already stopped */ }
+  return m[1];
 }
 
-function respawnArgv(session) {
-  return ['respawn', session];
+function resumeArgv(agent, prompt, identifier = '') {
+  const name = String(agent.name || '');
+  const label = /^\[[A-Z][A-Z0-9]*-\d+\]/.test(name) ? name : `[${identifier}] resumed`;
+  return ['--background', '--name', label.slice(0, 80), '--permission-mode', 'auto',
+    '--resume', String(agent.sessionId || agent.id), prompt];
 }
 
 // The remote-control link a session announces in its own transcript (a `bridge_status` line).
@@ -1138,10 +1204,10 @@ async function poll() {
       try {
         await comment(
           rec.issueId,
-          `▶️ **Respawned.** The usage window reset, so session \`${rec.session}\` was brought back in `
-            + `place — same session, same branch, same worktree — rather than re-dispatched. It is idle until `
-            + `someone sends **continue**`
-            + (rec.remoteUrl ? ` at ${rec.remoteUrl}` : ` (\`claude attach ${rec.session}\`)`) + `.\n\n`
+          `▶️ **Resumed.** The usage window reset, so the run continues automatically in session `
+            + `\`${rec.session}\` — same conversation, branch and worktree`
+            + (rec.previous ? `; the stopped session \`${rec.previous}\` is not coming back` : '') + `.`
+            + (rec.remoteUrl ? ` Watch it at ${rec.remoteUrl}.` : ` Watch it: \`claude attach ${rec.session}\`.`) + `\n\n`
             + `Attempt ${rec.attempts} of ${MAX_DISPATCH_ATTEMPTS}.`
         );
       } catch (err) {
@@ -1218,7 +1284,7 @@ async function poll() {
 // and it is only checkable if it can be called.
 export { workflowFor, buildDispatchArgv, splitCommand, DEFAULT_DISPATCH, dispatchBudget, readClaudeExpiry,
   countRunningSessions, concurrencySlots, busySessionIds, parseLimitReset, cooldownRemaining,
-  agentState, isWorking, findSessionByKey, liveSessionFor, parkForResume, resumeAfterLimit, resumePrompt, respawnArgv, remoteControlUrl, isBlocked,
+  agentState, isWorking, findSessionByKey, liveSessionFor, parkForResume, resumeAfterLimit, resumePrompt, resumeArgv, remoteControlUrl, livenessVerdict, agentFor, isBlocked,
   classifyTranscript, reviewRunning, findGhosts, reapGhosts,
   blockerKeys };
 

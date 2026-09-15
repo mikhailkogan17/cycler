@@ -16,13 +16,12 @@ is in.
    the alias must not be the reason that happens:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment list <KEY> | grep -q 'harness:<KEY>:dispatched' \
-  || "${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment add <KEY> --body '<!-- harness:<KEY>:dispatched -->
-Harness run started (fix mode) — contract → failing test → fix → audit → gate → PR → review. Next comment lands when the PR opens.'
+"${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment list <KEY> | grep -q 'Harness run started' \
+  || "${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment add <KEY> --body 'Harness run started (fix mode) — contract → failing test → fix → audit → gate → PR → review. Next comment lands when the PR opens.'
 ```
 
 2. **READ `${CLAUDE_PLUGIN_ROOT}/skills/workflow-feature/SKILL.md` and follow it from step 1**, with
-   the same inputs you were given. Skip its step 3 — you have already posted the marker.
+   the same inputs you were given. Skip its step 3 — you have already posted the start comment.
 3. **Read `${CLAUDE_PLUGIN_ROOT}/harness/modes/fix.md`** and work in that mode. The contract's
    acceptance check is a test that **fails on the current code and passes after the fix**. A fix
    whose regression test passes before the change has not been shown to fix anything.

@@ -28,7 +28,7 @@ function fixture(contract) {
 function run(dir, file, env = {}) {
   const payload = JSON.stringify({ cwd: dir, tool_input: { file_path: file } });
   try {
-    execFileSync("bash", [HOOK], { input: payload, encoding: "utf8", env: { ...process.env, ...env } });
+    execFileSync("bash", [HOOK], { input: payload, encoding: "utf8", env: { ...process.env, CYCLER_CONFIG: "/nonexistent/cycler.yaml", ...env } });
     return { allowed: true, msg: "" };
   } catch (e) {
     return { allowed: false, msg: (e.stderr || "").toString() };

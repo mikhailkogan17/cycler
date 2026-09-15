@@ -67,12 +67,11 @@ await t('stopOnOpenQuestions:false posts the questions and continues', async () 
   assert.ok(kinds(result).includes('open-questions'))
 })
 
-await t('every planned write carries an idempotency marker', async () => {
+await t('no planned write carries a hidden HTML marker', async () => {
   const { result } = await run({ args: base, responder: makeResponder({ ...green }) })
   for (const w of result.linearWrites.filter((x) => !x.skipped)) {
-    assert.ok(w.marker && w.marker.includes('APL-99') && w.marker.includes(w.kind),
-      `write "${w.kind}" needs a marker the caller can check before posting, got ${w.marker}`)
-    if (w.body) assert.ok(w.body.startsWith(w.marker), 'the marker must lead the body so it matches verbatim')
+    assert.ok(w.kind && w.issue === 'APL-99', `write "${w.kind}" must name its kind and issue`)
+    if (w.body) assert.doesNotMatch(w.body, /<!--/, 'comment bodies must be readable, no HTML markers')
   }
 })
 
