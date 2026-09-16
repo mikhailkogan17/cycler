@@ -51,6 +51,11 @@ const RUNNING_PATH = join(DIR, 'running.json');
 const COOLDOWN_PATH = join(DIR, 'cooldown.json');
 // Sessions the usage limit killed, parked until the window reopens. See resumeAfterLimit().
 const RESUME_PATH = join(DIR, 'resume.json');
+// The last credential expiry the poller has already reported as near. Exists only so the
+// "expiring" notice is logged once per episode instead of on every poll: the message describes a
+// self-healing state, and 1081 repetitions of it in poller.log trained a reader to treat a real
+// notice as noise (and to go re-login, which never was the fix).
+const CRED_NOTICE_PATH = join(DIR, 'cred-notice.json');
 
 const REDIRECT_URI = 'http://localhost:8787/callback';
 const SCOPES = 'read,write,app:assignable,app:mentionable';
@@ -603,6 +608,21 @@ function dispatchBudget(expiresAt, now = Date.now(), skewMs = REFRESH_SKEW_MS) {
   return expiresAt - now > skewMs ? Infinity : 1;
 }
 
+/**
+ * Whether this poll should log the near-expiry notice. One episode is one `expiresAt` value: while
+ * the token is unchanged the notice is logged once, and a refreshed token (a new expiresAt) is a
+ * new episode that may report again.
+ *
+ * Split out from the caller so it is testable without a keychain: the read/write are injected.
+ */
+function shouldAnnounceExpiry(expiresAt, read = () => loadJson(CRED_NOTICE_PATH, {}),
+  write = (v) => writeFileSync(CRED_NOTICE_PATH, JSON.stringify(v, null, 2))) {
+  if (!Number.isFinite(expiresAt)) return false;
+  if (read().announcedFor === expiresAt) return false;
+  try { write({ announcedFor: expiresAt }); } catch { /* a notice is not worth failing a poll */ }
+  return true;
+}
+
 // ── Concurrency ──────────────────────────────────────────────────────────────────────────────
 // A dispatched session is not one agent. /cycler:workflow-feature runs task-orchestration.js, which
 // fans out to ~5-9 subagents for a normal run and up to ~70 in the worst case, most of them on the
@@ -1141,9 +1161,13 @@ async function poll() {
 
   const expiresAt = readClaudeExpiry();
   const credBudget = dispatchBudget(expiresAt);
-  if (credBudget !== Infinity) {
-    log('claude credential is stale — dispatching one issue this poll so a single session performs '
-      + 'the refresh; the rest go out on the next poll');
+  if (credBudget !== Infinity && shouldAnnounceExpiry(expiresAt)) {
+    // Not "you are logged out". The access token is minutes from expiry and the CLI refreshes it
+    // by itself on the next session that goes out; the refresh token is untouched and `claude`
+    // still reports a logged-in account. Dispatching one issue is how the refresh is serialised,
+    // so several sessions do not race to perform it. Nothing here needs a human.
+    log('claude access token expires shortly — letting a single session refresh it, so this poll '
+      + 'dispatches one issue and the rest go out on the next. No action needed; not a logout');
   }
   const agents = readAgents(defaultAgentsRead);
   reapGhosts(agents);
@@ -1283,6 +1307,7 @@ async function poll() {
 // a dispatch command that silently renders wrong is the failure this whole file is careful about,
 // and it is only checkable if it can be called.
 export { workflowFor, buildDispatchArgv, splitCommand, DEFAULT_DISPATCH, dispatchBudget, readClaudeExpiry,
+  shouldAnnounceExpiry,
   countRunningSessions, concurrencySlots, busySessionIds, parseLimitReset, cooldownRemaining,
   agentState, isWorking, findSessionByKey, liveSessionFor, parkForResume, resumeAfterLimit, resumePrompt, resumeArgv, remoteControlUrl, livenessVerdict, agentFor, isBlocked,
   classifyTranscript, reviewRunning, findGhosts, reapGhosts,

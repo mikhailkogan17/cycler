@@ -13,7 +13,7 @@ import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 
 const POLLER = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'poller', 'poller.mjs');
-const { dispatchBudget, readClaudeExpiry } = await import(POLLER + '?race=1');
+const { dispatchBudget, readClaudeExpiry, shouldAnnounceExpiry } = await import(POLLER + '?race=1');
 
 let fails = 0;
 const t = (n, fn) => { try { fn(); console.log('PASS', n); } catch (e) { fails++; console.log('FAIL', n, '\n  ', e.message); } };
@@ -84,6 +84,41 @@ t('poll() actually spends the budget — the pure function is wired in', () => {
   assert.match(loop[0], /=\s*dispatchBudget\(/, 'poll() never asks for a budget');
   assert.match(loop[0], /if\s*\(budget\s*<=\s*0\)\s*break/, 'poll() never stops when the budget runs out');
   assert.match(loop[0], /budget\s*-=\s*1/, 'poll() never spends the budget, so the limit can never be reached');
+});
+
+// The notice this state prints used to go out on EVERY poll — 1081 copies in poller.log — and it
+// read like a demand to re-login, which was never the fix: the CLI refreshes the token itself. One
+// episode is one expiresAt value, so it is announced once and again only after a real refresh.
+t('the near-expiry notice is announced once per token, not once per poll', () => {
+  let store = {};
+  const read = () => store;
+  const write = (v) => { store = v; };
+  assert.strictEqual(shouldAnnounceExpiry(NOW, read, write), true, 'the first poll must report it');
+  assert.strictEqual(shouldAnnounceExpiry(NOW, read, write), false, 'the second poll must stay quiet');
+  assert.strictEqual(shouldAnnounceExpiry(NOW, read, write), false);
+  // A refreshed token is a new episode and may be reported again.
+  assert.strictEqual(shouldAnnounceExpiry(NOW + 8 * 3600_000, read, write), true);
+});
+
+t('an unreadable notice file cannot silence or crash the poll', () => {
+  const boom = () => { throw new Error('unwritable'); };
+  assert.strictEqual(shouldAnnounceExpiry(NOW, () => ({}), boom), true);
+  assert.strictEqual(shouldAnnounceExpiry(null, () => ({}), boom), false, 'an unknown expiry is not an episode');
+});
+
+t('the notice no longer calls the credential stale or asks for a login', () => {
+  // The wording is the whole point of the change: a self-healing state must not read as a task.
+  const src = readFileSync(POLLER.replace(/^file:\/\//, ''), 'utf8');
+  const line = /log\('claude access token expires shortly[\s\S]*?\);/.exec(src);
+  assert.ok(line, 'the near-expiry notice was not found');
+  assert.match(line[0], /No action needed/, 'the notice must say it needs nothing from a human');
+  assert.doesNotMatch(src, /credential is stale/, 'the misleading wording is back');
+});
+
+t('the notice is gated on the once-per-episode check', () => {
+  const src = readFileSync(POLLER.replace(/^file:\/\//, ''), 'utf8');
+  assert.match(src, /credBudget !== Infinity && shouldAnnounceExpiry\(expiresAt\)/,
+    'poll() logs the notice without consulting shouldAnnounceExpiry');
 });
 
 process.exit(fails ? 1 : 0);
