@@ -113,7 +113,7 @@ t('poll() no longer reads `claude logs`', () => {
   const src = readFileSync(POLLER, 'utf8');
   assert.doesNotMatch(src, /\['logs'/);
   assert.match(src, /reapGhosts\(agents\)/);
-  assert.match(src, /Waiting for you/);
+  assert.match(src, /is waiting for your reply/);
 });
 
 if (fails) { console.log(`${fails} failed`); process.exit(1); }

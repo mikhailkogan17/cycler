@@ -35,8 +35,8 @@ description: The workflow a dispatched session runs for a feature, improvement o
 3. **Post a start comment before invoking the workflow** (Linear reference only):
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment list <KEY> | grep -q 'Harness run started' \
-  || "${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment add <KEY> --body '🔧 Harness run started — contract → implement → audit → gate → PR → review. Next comment lands when the PR opens.'
+"${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment list <KEY> | grep -q 'workflow run started' \
+  || "${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment add <KEY> --body "🔧 'feature' workflow run started in session \`$CLAUDE_SESSION_ID\`."
 ```
 
    Every other Linear write in this skill happens in step 5, *after* the workflow returns — which is 20-40

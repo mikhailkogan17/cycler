@@ -16,8 +16,8 @@ is in.
    the alias must not be the reason that happens:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment list <KEY> | grep -q 'Harness run started' \
-  || "${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment add <KEY> --body 'Harness run started (fix mode) — contract → failing test → fix → audit → gate → PR → review. Next comment lands when the PR opens.'
+"${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment list <KEY> | grep -q 'workflow run started' \
+  || "${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment add <KEY> --body "🐛 'bug' workflow run started in session \`$CLAUDE_SESSION_ID\`."
 ```
 
 2. **READ `${CLAUDE_PLUGIN_ROOT}/skills/workflow-feature/SKILL.md` and follow it from step 1**, with

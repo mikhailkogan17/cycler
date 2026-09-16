@@ -54,6 +54,7 @@ function poll({ script = {}, cfg = null, token = {}, processed = null, env = {} 
   const entries = readFileSync(journal, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
   const state = existsSync(join(home, 'processed.json')) ? JSON.parse(readFileSync(join(home, 'processed.json'), 'utf8')) : null;
   return { r, entries, state, repo, repoReal: realpathSync(repo), home,
+    stdout: `${r.stdout || ''}${r.stderr || ''}`,
     spawns: entries.filter((e) => e.kind === 'spawn'),
     comments: entries.filter((e) => e.op === 'comment'),
     issuesQueries: entries.filter((e) => e.op === 'issues'),
@@ -137,18 +138,18 @@ t('3.4 CYCLER_WORKFLOW overrides all routing, including a matching label', () =>
   assert.match(forced.spawns[0].argv.join(' '), /\/forced/, 'CYCLER_WORKFLOW did not override the label route');
 });
 
-t('3.5 the chosen route AND the reason appear in the dispatch comment', () => {
+t('3.5 the chosen route AND the reason are recorded in the log, not the comment', () => {
   // Both halves matter. Without the reason, a run routed to the wrong workflow looks identical to
   // one routed correctly — you can see WHAT ran but not WHY, so you cannot tell a label typo from a
-  // deliberate default.
+  // deliberate default. They belong in poller.log rather than the board comment: the comment is a
+  // phone notification, and routing is something you go looking for after noticing it went wrong.
   const cfg = (repo) => dispatchCfg(repo, 'workflows:\n  research: /cycler:workflow-research\n');
   const p = poll({ script: { issues: [issue({ labels: ['research'] })] }, cfg });
-  const body = p.comments[0].variables.body;
-  assert.match(body, /\/cycler:workflow-research/, 'the comment does not name the route');
-  assert.match(body, /label "research"/, 'the comment does not give the REASON for the route');
+  assert.match(p.stdout, /\/cycler:workflow-research/, 'the log does not name the route');
+  assert.match(p.stdout, /label "research"/, 'the log does not give the REASON for the route');
 
   const dflt = poll({ script: { issues: [issue({ labels: ['chore'] })] }, cfg });
-  assert.match(dflt.comments[0].variables.body, /no routing label/,
+  assert.match(dflt.stdout, /no routing label/,
     'an unrouted issue must SAY it took the default, not silently look like a match');
 });
 
@@ -174,11 +175,15 @@ t('4.6 the dispatched session runs in repo.path', () => {
 });
 
 // ─── §5 Reporting ─────────────────────────────────────────────────────────────
-t('5.1 every dispatch posts a comment with the session id, route and reason', () => {
+t('5.1 every dispatch posts a one-line comment carrying the session id', () => {
+  // The id is the only part of this comment anyone acts on, and these land as phone notifications:
+  // a paragraph of route, repo path and attach commands is what made the board unreadable.
   const p = poll({ script: { issues: [issue()] }, cfg: dispatchCfg });
   assert.strictEqual(p.comments.length, 1, 'no dispatch comment was posted');
   const b = p.comments[0].variables.body;
-  assert.match(b, /sess-abc123/); assert.match(b, /Route:/); assert.match(b, /cycler:workflow-feature/);
+  assert.match(b, /sess-abc123/, 'the comment does not carry the session id');
+  assert.strictEqual(b.split('\n').length, 1, 'the dispatch comment grew past one line');
+  assert.ok(b.length <= 120, `the dispatch comment is ${b.length} chars: ${b}`);
 });
 
 t('5.2 a FAILED dispatch posts a comment too', () => {

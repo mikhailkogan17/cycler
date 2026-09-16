@@ -35,8 +35,8 @@ produced a second contradicting comment on the same issue and a human had to rec
 ## 1b. Say you started, before you do anything slow
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment list <KEY> | grep -q 'Research run started' \
-  || "${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment add <KEY> --body '🔎 Research run started — grounding in the repo, then deciding. Next comment is the answer.'
+"${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment list <KEY> | grep -q 'workflow run started' \
+  || "${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment add <KEY> --body "🔎 'research' workflow run started in session \`$CLAUDE_SESSION_ID\`."
 ```
 
 This is for the humans watching the board. The poller does not read it: it proves a session started

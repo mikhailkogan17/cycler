@@ -204,7 +204,7 @@ t('resumeAfterLimit re-watches the NEW session id the resume returns', () => {
   assert.deepStrictEqual(watched.map((r) => r.session), ['new22222'], 'the old id is watched — the new session is reaped as a ghost');
 });
 
-t('the resume comment carries the remote-control link the human types "continue" into', () => {
+t('the resume comment says who resumed it and why, in one line', () => {
   const home = mkdtempSync(join(tmpdir(), 'cycler-home-'));
   const prev = process.env.HOME; process.env.HOME = home;
   try {
@@ -217,7 +217,7 @@ t('the resume comment carries the remote-control link the human types "continue"
     assert.strictEqual(remoteControlUrl('abcd1234', agents), 'https://claude.ai/code/session_NEW1');
     assert.strictEqual(remoteControlUrl('missing', () => '[]'), null);
   } finally { process.env.HOME = prev; }
-  assert.match(readFileSync(POLLER, 'utf8'), /\*\*Resumed\.\*\*[\s\S]{0,400}remoteUrl/);
+  assert.match(readFileSync(POLLER, 'utf8'), /▶️ Resumed by cycler because the usage window reset/);
 });
 
 t('poll() counts resumed sessions against max_concurrent', () => {

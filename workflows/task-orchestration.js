@@ -563,6 +563,13 @@ and do not work around it.`,
   return res.note || ''
 }
 
+// A board comment gets the first sentence of a reason; whoever needs the rest opens the run.
+function firstSentence(text) {
+  const one = String(text).replace(/\s+/g, ' ').trim()
+  const cut = one.search(/[.;](\s|$)/)
+  return cut > 0 ? one.slice(0, cut) : one.slice(0, 200)
+}
+
 // Every blocked exit funnels through here, so there is exactly ONE place that can forget to tell Linear.
 async function blocked(payload) {
   const stage = payload.stage || 'unknown'
@@ -576,32 +583,15 @@ async function blocked(payload) {
       : payload.roundsExhausted
         ? `fix rounds exhausted (${payload.fixMax}) — the ${stage} stage never came back clean`
         : 'no reason recorded')
-  const lines = [
-    `### Harness run blocked at **${stage}**`,
-    '',
-    `**Reason:** ${reason}`,
-  ]
-  if (payload.fatal) lines.push('', '**Fatal:** the stage never ran (agent/API failure). No amount of fix rounds would have helped — this needs a human.')
-  if (payload.roundsExhausted) lines.push('', `**Rounds exhausted:** ${payload.fixMax}`
-    + (payload.gateFixMax != null ? ` (gate budget ${payload.gateFixMax}, review budget ${payload.reviewFixMax})` : ''))
-  if (payload.lastFailure) {
-    const li = (payload.lastFailure.issues || []).slice(0, 10)
-    lines.push('', `**Last failure (${payload.lastFailure.stage}):**`, ...(li.length ? li.map((i) => `- ${i}`) : ['- _none recorded_']))
-  }
-  lines.push('', '**Fix rounds:**', fixLogDigest(payload.fixLog))
-  const narrowed = (payload.reviewCoverage || []).filter((c) => (c.lensesSkipped || []).length > 0)
-  if (narrowed.length > 0) {
-    lines.push('', '**Review coverage** — later rounds were deliberately narrower than the first (APL-42):',
-      ...narrowed.map((c) => `- round ${c.round}: ran ${c.lensesRun.join(', ')}; did NOT re-run ${c.lensesSkipped.join(', ')} (${c.diffScope})`))
-  }
-  if (payload.pr?.prUrl) lines.push('', `**PR (open, NOT merged):** ${payload.pr.prUrl}`)
-  else if (payload.terminal === 'no-pr') lines.push('', '**No PR was opened.** Nothing from this run is on the base branch.')
-  if (payload.branch) lines.push('', `**Branch:** \`${payload.branch}\``)
-  // APL-45: release before reporting, so the note about what was (or was not) cleaned up reaches the
-  // Linear comment too — a leaked lock that only appears in the tool result is a leaked lock nobody sees.
+  // One line plus the facts that change what the reader does next. These comments arrive as phone
+  // notifications: a fix-round digest and a coverage table are unreadable there, and the run's own
+  // tool result already carries them for anyone who opens it.
+  const lines = [`🛑 Workflow run blocked at ${stage}: ${firstSentence(reason)}`]
+  if (payload.fatal) lines.push('Fatal — the stage never ran. Needs a human.')
+  if (payload.pr?.prUrl) lines.push(payload.pr.prUrl)
+  else if (payload.terminal === 'no-pr') lines.push('No PR opened.')
   const cleanupNote = await releaseIsolation('blocked')
-  if (cleanupNote) lines.push('', `**Workspace:** ${cleanupNote}`)
-  lines.push('', '_Posted by the task harness. Nothing was merged._')
+  if (cleanupNote) lines.push(cleanupNote)
 
   linearSync(`blocked-${stage}`, {
     // Back to Todo, not Backlog: the run started, so the issue is triaged and actionable — it just needs
@@ -1565,35 +1555,17 @@ normally. Do not fix any of the underlying problems — filing them is the entir
 // honestly close it.
 if (!noCommit) {
   linearSync('approved', {
+    // The headline is one line. Everything after it exists only when something went differently
+    // than "clean run, PR open" — a reader who sees nothing else knows there is nothing else.
     body: [
-      reviewRes ? '### Harness run complete — review APPROVED' : '### Harness run complete — PR open, NOT reviewed',
-      '',
-      `**Branch:** \`${taskBranch}\``,
-      pr?.prUrl ? `**PR (open, NOT merged):** ${pr.prUrl}` : '**PR:** not opened — the branch is pushed and reviewable.',
-      `**Files changed:** ${[...taskFiles].join(', ') || 'none recorded'}`,
-      '',
-      '**Gate report:**',
-      '',
-      verifyRes?.report ? '```\n' + String(verifyRes.report).slice(0, 2000) + '\n```' : '_no gate report recorded_',
-      '',
-      fixLog.length ? `**Fix rounds:**\n${fixLogDigest(fixLog)}` : '_Clean on the first round._',
-      // The filed follow-ups belong on the issue, not only in a tool result the human never opens.
-      followups?.filed?.length
-        ? `\n**Follow-ups filed (Triage):**\n${followups.filed.map((f) => `- ${f}`).join('\n')}`
-        : '',
+      `✅ Workflow run finished${reviewRes ? '' : ' (NOT reviewed)'}. ${pr?.prUrl || 'no PR — branch pushed'}`,
+      !reviewRes ? 'The review stage was skipped on the token budget floor — review before merging.' : '',
+      followups?.filed?.length ? `Follow-ups filed: ${followups.filed.join(', ')}` : '',
       followups?.failed?.length
-        ? `\n> **${followups.failed.length} follow-up(s) could NOT be filed** and nothing is tracking them:`
-          + ` ${followups.failed.join('; ')}`
-        : '',
-      reviewRes ? '' : '\n> **This PR was NOT reviewed** — the review stage was skipped (token budget floor).'
-        + ' Review it manually before merging.',
+        ? `⚠️ ${followups.failed.length} follow-up(s) could NOT be filed: ${followups.failed.join('; ')}` : '',
       (reviewRes?.droppedFindings || []).length
-        ? `\n> **${reviewRes.droppedFindings.length} review finding(s) were dropped by the fan-out cap** and never`
-          + ` verified: ${reviewRes.droppedFindings.slice(0, 10).join('; ')}`
-        : '',
-      '',
-      '_Posted by the task harness. Merging is still yours — the harness never merges._',
-    ].filter((l) => l !== '').join('\n'),
+        ? `⚠️ ${reviewRes.droppedFindings.length} review finding(s) dropped unverified by the fan-out cap.` : '',
+    ].filter(Boolean).join('\n'),
   })
 }
 

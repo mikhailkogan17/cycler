@@ -74,7 +74,7 @@ const stale = (over = {}) => [{
   issueId: 'uuid-1', identifier: 'ABC-1', workflow: '/cycler:workflow-feature',
   session: 'sess-1', at: Date.now() - 10 * 60 * 1000, attempts: 1, ...over,
 }];
-const deadBody = (p) => p.comments.map((c) => c.variables.body).find((b) => /never started/i.test(b));
+const deadBody = (p) => p.comments.map((c) => c.variables.body).find((b) => /died without starting/i.test(b));
 const agent = (over = {}) => ({ id: 'sess-1', sessionId: 'sess-1', cwd: CWD, name: '[ABC-1] Do the thing', state: 'working', ...over });
 const now = () => new Date().toISOString();
 const reply = { type: 'assistant', timestamp: now(), message: { content: [{ type: 'text', text: 'reading the issue' }] } };
@@ -93,7 +93,10 @@ t('a session whose transcript holds only an API error (expired login) is dead', 
   const p = poll({ ...base, pending: stale(), agents: [agent({ state: 'idle' })], transcripts: { 'sess-1': [loginError] } });
   const b = deadBody(p);
   assert.ok(b, 'a login-expired session read as alive');
-  assert.match(b, /ABC-1/); assert.match(b, /sess-1/); assert.match(b, /login/i);
+  // The body names the session and nothing else: it is posted ON the issue, so repeating the key
+  // is noise, and the cause (an expired login, usually) belongs in poller.log rather than in a
+  // phone notification that cannot act on it.
+  assert.match(b, /sess-1/);
 });
 
 t('a dead dispatch is un-processed, so the next poll retries it', () => {
@@ -145,7 +148,7 @@ t('a dispatch still inside the grace window is not judged yet', () => {
 t('retries stop at maxAttempts instead of looping forever', () => {
   const p = poll({ ...base, pending: stale({ attempts: 3 }), agents: [] });
   assert.strictEqual(p.spawns.length, 0, 'the poller kept re-dispatching past maxAttempts');
-  assert.match(deadBody(p), /Not retrying/, 'giving up must be said out loud, not just done');
+  assert.match(deadBody(p), /Giving up/, 'giving up must be said out loud, not just done');
   assert.deepStrictEqual(p.processed, ['uuid-1'], 'a given-up issue stays processed');
 });
 
@@ -153,7 +156,7 @@ t('dispatch.max_attempts is read from the config, in either spelling', () => {
   for (const spelling of ['max_attempts', 'maxAttempts', 'max-attempts']) {
     const p = poll({ ...base, pending: stale({ attempts: 1 }), agents: [], extraCfg: `  ${spelling}: 1\n` });
     assert.strictEqual(p.spawns.length, 0, `${spelling} was ignored — it re-dispatched past the limit`);
-    assert.match(deadBody(p), /Not retrying/, `${spelling} was ignored`);
+    assert.match(deadBody(p), /Giving up/, `${spelling} was ignored`);
   }
   const dflt = poll({ ...base, pending: stale({ attempts: 1 }), agents: [] });
   assert.strictEqual(dflt.spawns.length, 1, 'attempt 1 of 3 must retry');

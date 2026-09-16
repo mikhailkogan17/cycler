@@ -129,6 +129,15 @@ mkdirSync(DIR, { recursive: true });
 function log(...a) { console.log(new Date().toISOString(), ...a); }
 function logErr(...a) { console.error(new Date().toISOString(), ...a); }
 
+// Board comments become phone notifications, so a timestamp in them has to be readable at a
+// glance: an ISO string in UTC is neither local nor scannable. Date only when it is not today.
+function localTime(d, now = new Date()) {
+  const sameDay = d.toDateString() === now.toDateString();
+  return d.toLocaleString(undefined, sameDay
+    ? { hour: '2-digit', minute: '2-digit' }
+    : { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
 function loadJson(path, fallback) {
   try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return fallback; }
 }
@@ -401,15 +410,9 @@ async function dispatch(issue) {
   try {
     await comment(
       issue.id,
-      `⚡ Dispatched "${sessionName}"${sessionId ? ` — session \`${sessionId}\`` : ''} in \`${REPO_PATH}\`` +
-        `\n\n**Route:** \`${workflow}\` — ${why}` +
-        `\n\nWatch it: \`claude attach ${sessionId || '<id>'}\` · \`claude logs ${sessionId || '<id>'}\`` +
-        // Appended, never prefixed: "⚡ Dispatched" is the first thing this comment says on every
-        // dispatch, and other things match on that.
-        ((carryAttempts.get(issue.id) || 1) > 1
-          ? `\n\n▶️ **Resumed** after the account's usage window reset — attempt `
-            + `${carryAttempts.get(issue.id)} of ${MAX_DISPATCH_ATTEMPTS}.`
-          : '')
+      // One line. These land as phone notifications, and a paragraph of route explanation and
+      // attach commands is unreadable there — the id is the only part anyone acts on.
+      `⚡ Dispatched to claude session \`${sessionId || '?'}\`.`
     );
   } catch (err) {
     logErr(`dispatched ${issue.identifier} but could not comment: ${err.message}`);
@@ -493,16 +496,8 @@ async function checkLiveness(readAgentsRaw = defaultAgentsRead, readTranscript =
     try {
       await comment(
         rec.issueId,
-        `⚠️ **Dispatched session never started.** \`${rec.identifier}\` was handed to ` +
-          `\`${rec.workflow}\`${rec.session ? ` as session \`${rec.session}\`` : ''}, but its transcript shows no ` +
-          `reply within ${START_GRACE_MS / 1000}s — so it spawned and then died, rather than ` +
-          `never being seen.\n\n` +
-          `Most likely: the \`claude\` CLI login expired. Check with \`claude --print "ok"\`; ` +
-          `if it fails, run \`/login\` in an interactive terminal.\n\n` +
-          (giveUp
-            ? `This was attempt ${attempts} of ${MAX_DISPATCH_ATTEMPTS}. **Not retrying** — fix the cause, then remove ` +
-              `the issue id from \`~/.cycler/processed.json\`.`
-            : `Retrying on the next poll (attempt ${attempts + 1} of ${MAX_DISPATCH_ATTEMPTS}).`)
+        `💀 Session \`${rec.session || '?'}\` died without starting. `
+          + (giveUp ? `Giving up (${attempts}/${MAX_DISPATCH_ATTEMPTS}).` : `Retrying (${attempts + 1}/${MAX_DISPATCH_ATTEMPTS}).`)
       );
     } catch (err) {
       logErr(`  and could not comment: ${err.message}`);
@@ -1175,13 +1170,12 @@ async function poll() {
   const issueStates = new Map(issues.nodes.map((i) => [i.id, i.state?.type]));
   const review = reviewRunning({ agents, issueStates });
   for (const rec of review.waiting) {
-    const excerpt = rec.question.length > 1200 ? `…${rec.question.slice(-1200)}` : rec.question;
+    const excerpt = rec.question.length > 400 ? `…${rec.question.slice(-400)}` : rec.question;
     try {
       await comment(
         rec.issueId,
-        `🙋 **Waiting for you.** Session \`${rec.session}\` stopped and is waiting for a reply:\n\n`
-          + excerpt.split('\n').map((l) => `> ${l}`).join('\n') + '\n\n'
-          + `Answer ${rec.remoteUrl ? `at ${rec.remoteUrl}` : `with \`claude attach ${rec.session}\``}.`
+        `🙋 Session \`${rec.session}\` is waiting for your reply${rec.remoteUrl ? `: ${rec.remoteUrl}` : ''}\n\n`
+          + excerpt.split('\n').map((l) => `> ${l}`).join('\n')
       );
     } catch (err) {
       logErr(`${rec.identifier} is waiting on a human but could not comment: ${err.message}`);
@@ -1198,13 +1192,7 @@ async function poll() {
       try {
         await comment(
           rec.issueId,
-          `⏸️ **Paused — Claude usage limit reached.**\n\n`
-            + `The session working this issue (\`${rec.session}\`) was stopped when the account's `
-            + `5-hour window ran out. Nothing is lost: the session still holds the run.\n\n`
-            + `The poller is holding every dispatch until **${resumesAt.toISOString()}**, when the `
-            + `window resets, and will then **resume this same session** — not start a new one — so `
-            + `the work continues where it stopped. No action needed.\n\n`
-            + `Attempt ${rec.attempts} of ${MAX_DISPATCH_ATTEMPTS}.`
+          `⏸️ 5h usage window exceeded. Resets at ${localTime(resumesAt)}.`
         );
       } catch (err) {
         logErr(`could not tell ${rec.identifier} it was paused on the usage limit: ${err.message}`);
@@ -1228,11 +1216,7 @@ async function poll() {
       try {
         await comment(
           rec.issueId,
-          `▶️ **Resumed.** The usage window reset, so the run continues automatically in session `
-            + `\`${rec.session}\` — same conversation, branch and worktree`
-            + (rec.previous ? `; the stopped session \`${rec.previous}\` is not coming back` : '') + `.`
-            + (rec.remoteUrl ? ` Watch it at ${rec.remoteUrl}.` : ` Watch it: \`claude attach ${rec.session}\`.`) + `\n\n`
-            + `Attempt ${rec.attempts} of ${MAX_DISPATCH_ATTEMPTS}.`
+          `▶️ Resumed by cycler because the usage window reset — session \`${rec.session}\`.`
         );
       } catch (err) {
         logErr(`resumed ${rec.identifier} but could not comment: ${err.message}`);
@@ -1284,8 +1268,7 @@ async function poll() {
       try {
         await comment(
           issue.id,
-          `⚠️ Dispatch failed for \`${issue.identifier}\` — will retry on the next poll (180s).\n\n` +
-            '```\n' + String(err.message).slice(0, 1500) + '\n```'
+          `⚠️ Dispatch failed, retrying next poll: ${String(err.message).split('\n')[0].slice(0, 200)}`
         );
       } catch (e2) {
         logErr(`  and could not comment: ${e2.message}`);
@@ -1306,7 +1289,7 @@ async function poll() {
 // Exported so the tests can exercise routing and the dispatch template without starting a poll —
 // a dispatch command that silently renders wrong is the failure this whole file is careful about,
 // and it is only checkable if it can be called.
-export { workflowFor, buildDispatchArgv, splitCommand, DEFAULT_DISPATCH, dispatchBudget, readClaudeExpiry,
+export { localTime, workflowFor, buildDispatchArgv, splitCommand, DEFAULT_DISPATCH, dispatchBudget, readClaudeExpiry,
   shouldAnnounceExpiry,
   countRunningSessions, concurrencySlots, busySessionIds, parseLimitReset, cooldownRemaining,
   agentState, isWorking, findSessionByKey, liveSessionFor, parkForResume, resumeAfterLimit, resumePrompt, resumeArgv, remoteControlUrl, livenessVerdict, agentFor, isBlocked,
