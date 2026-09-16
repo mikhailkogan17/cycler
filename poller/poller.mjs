@@ -37,6 +37,7 @@ import { join } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { readConfig, configPath, pick } from '../lib/yaml.mjs';
+import { followUp } from './followup.mjs';
 
 // State, not config: everything in here is written by this process. The config lives in
 // ~/.config/cycler/config.yaml and is never written to.
@@ -56,6 +57,8 @@ const RESUME_PATH = join(DIR, 'resume.json');
 // self-healing state, and 1081 repetitions of it in poller.log trained a reader to treat a real
 // notice as noise (and to go re-login, which never was the fix).
 const CRED_NOTICE_PATH = join(DIR, 'cred-notice.json');
+// issueId → the session that owns it and when its feedback was last read. See followup.mjs.
+const FOLLOW_PATH = join(DIR, 'follow.json');
 
 const REDIRECT_URI = 'http://localhost:8787/callback';
 const SCOPES = 'read,write,app:assignable,app:mentionable';
@@ -76,6 +79,7 @@ const PATH_PREPEND = (Array.isArray(prepend) && prepend.length
 // it sent the session a literal string with no skill behind it.
 const WORKFLOW = process.env.CYCLER_WORKFLOW || cfg('workflows.default') || '/cycler:workflow-feature';
 const MAX_PER_POLL = 50;
+const BRANCH_PREFIX = cfg('repo.branch_prefix') || 'claude/';
 // How long a dispatched session gets to post its start marker before it is declared dead, and how
 // many times an issue is re-dispatched before the poller stops trying. Both are config keys because
 // "how slow is a cold start here" is a machine fact, not a universal one. Read through cfg() like
@@ -385,6 +389,7 @@ async function dispatch(issue) {
     }
   }
   log(`dispatched ${issue.identifier} workflow=${workflow} session=${sessionId || 'unknown'}`);
+  if (sessionId) follow(issue.id, issue.identifier, sessionId);
   // Record it as UNPROVEN. checkLiveness() on a later poll decides whether this session ever ran.
   // Written before the announcement comment on purpose: a dispatch that is announced but not tracked
   // is exactly the silent failure this whole mechanism exists to end.
@@ -412,7 +417,7 @@ async function dispatch(issue) {
       issue.id,
       // One line. These land as phone notifications, and a paragraph of route explanation and
       // attach commands is unreadable there — the id is the only part anyone acts on.
-      `Dispatched to \`claude\` session \`${sessionId || '?'}\`.`
+      `Dispatched to \`claude\` session ${sessionLink(sessionId)}.`
     );
   } catch (err) {
     logErr(`dispatched ${issue.identifier} but could not comment: ${err.message}`);
@@ -496,7 +501,7 @@ async function checkLiveness(readAgentsRaw = defaultAgentsRead, readTranscript =
     try {
       await comment(
         rec.issueId,
-        `${giveUp ? '💀 ' : ''}Session \`${rec.session || '?'}\` died without starting. `
+        `${giveUp ? '💀 ' : ''}Session ${sessionLink(rec.session)} died without starting. `
           + (giveUp ? `Giving up (${attempts}/${MAX_DISPATCH_ATTEMPTS}).` : `Retrying (${attempts + 1}/${MAX_DISPATCH_ATTEMPTS}).`)
       );
     } catch (err) {
@@ -933,7 +938,8 @@ function reviewRunning({ agents = readAgents(defaultAgentsRead), readTranscript 
       limited.push(rec);
       continue;
     }
-    if (!agent || AGENT_GONE_STATES.has(agentState(agent)) || verdict.kind === 'done') { finished.push(rec); continue; }
+    if (!agent || AGENT_GONE_STATES.has(agentState(agent)) || verdict.kind === 'done'
+      || (rec.followup && verdict.kind === 'turn')) { finished.push(rec); continue; }
     if (verdict.kind === 'turn' && rec.notified !== verdict.uuid) {
       rec.notified = verdict.uuid;
       if (!verdict.reported) waiting.push({ ...rec, question: verdict.text, remoteUrl: remoteControlUrl(rec.session, () => JSON.stringify(agents)) });
@@ -1137,6 +1143,41 @@ function remoteControlUrl(session, read = defaultAgentsRead) {
   }
 }
 
+// A session id as the board shows it: a link to the session when it has announced one.
+function sessionLink(session, read = defaultAgentsRead) {
+  if (!session) return '`?`';
+  const url = remoteControlUrl(session, read);
+  return url ? `[${session}](<${url}>)` : `\`${session}\``;
+}
+
+function follow(issueId, identifier, session, seenAt = Date.now()) {
+  try {
+    const reg = loadJson(FOLLOW_PATH, {});
+    reg[issueId] = { ...(reg[issueId] || { seenAt }), identifier, session };
+    writeFileSync(FOLLOW_PATH, JSON.stringify(reg, null, 2));
+  } catch (err) {
+    logErr(`could not record ${identifier} for follow-up: ${err.message}`);
+  }
+}
+
+// The PR on the issue's branch, with every comment a human could have left on it: conversation
+// comments, review bodies and inline review comments.
+function defaultPrFor(identifier) {
+  const opts = { cwd: REPO_PATH, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 20_000 };
+  let pr;
+  try {
+    pr = JSON.parse(execFileSync('gh', ['pr', 'view', `${BRANCH_PREFIX}${identifier}`, '--json',
+      'number,state,url,comments,reviews'], opts));
+  } catch { return null; } // no PR yet
+  const inline = JSON.parse(execFileSync('gh', ['api', `repos/{owner}/{repo}/pulls/${pr.number}/comments`], opts) || '[]');
+  const comments = [
+    ...(pr.comments || []),
+    ...(pr.reviews || []).filter((r) => r.body || r.state === 'CHANGES_REQUESTED').map((r) => ({ ...r, createdAt: r.submittedAt })),
+    ...inline,
+  ];
+  return { number: pr.number, state: pr.state, url: pr.url, comments };
+}
+
 function defaultStop(session) {
   execFileSync(CLAUDE_BIN, ['stop', session], { stdio: 'ignore', timeout: 15_000 });
 }
@@ -1156,6 +1197,7 @@ async function poll() {
            # what makes a blocking link mean something to the poller: without it the board can say
            # an issue is blocked and the poller will cheerfully dispatch it anyway.
            inverseRelations { nodes { type issue { identifier state { type } } } }
+           comments(last: 10) { nodes { createdAt body user { id } botActor { id } } }
          }
        }
      }`,
@@ -1189,7 +1231,7 @@ async function poll() {
     try {
       await comment(
         rec.issueId,
-        `🙋 Session \`${rec.session}\` is waiting for your reply${rec.remoteUrl ? `: ${rec.remoteUrl}` : ''}\n\n`
+        `🙋 Session ${rec.remoteUrl ? `[${rec.session}](<${rec.remoteUrl}>)` : `\`${rec.session}\``} is waiting for your reply:\n\n`
           + excerpt.split('\n').map((l) => `> ${l}`).join('\n')
       );
     } catch (err) {
@@ -1228,15 +1270,48 @@ async function poll() {
     // A resumed session occupies a slot now, even if the registry has not caught up yet.
     if (running !== null) running += resumed.length;
     for (const rec of resumed) {
+      if (rec.session) follow(rec.issueId, rec.identifier, rec.session);
       try {
         await comment(
           rec.issueId,
-          `Resumed by cycler because the usage window reset — session \`${rec.session}\`.`
+          `Resumed by cycler because the usage window reset — session ${sessionLink(rec.session)}.`
         );
       } catch (err) {
         logErr(`resumed ${rec.identifier} but could not comment: ${err.message}`);
       }
     }
+  }
+  // Merged PRs close their sessions; new human feedback wakes them. Backfill first, so issues
+  // dispatched before this existed are followed too — from now, not from their whole history.
+  try {
+    const reg = loadJson(FOLLOW_PATH, {});
+    const idsNow = new Map((agents || []).filter(Boolean).map((a) => [String(a.id || ''), a]));
+    for (const issue of issues.nodes) {
+      if (reg[issue.id] || !processed.has(issue.id)) continue;
+      const session = findSessionByKey(issue.identifier, () => JSON.stringify(agents || []));
+      if (session) reg[issue.id] = { identifier: issue.identifier, session, seenAt: Date.now() };
+    }
+    const next = await followUp(issues.nodes, reg, {
+      prFor: defaultPrFor,
+      isWorking: (id) => { const a = idsNow.get(id); return Boolean(a && isWorking(a)); },
+      resume: (id, prompt, identifier) => {
+        const session = defaultResume(id, prompt, idsNow.get(id) || { id, name: `[${identifier}] follow-up` });
+        // Watched like any run, so a usage limit still parks it. `followup` marks its closing turn as
+        // the end of the job rather than a question: it answers feedback, it does not ask for any.
+        const issue = issues.nodes.find((i) => i.identifier === identifier);
+        const watched = loadJson(RUNNING_PATH, []).filter((r) => r.session !== id);
+        watched.push({ session, issueId: issue?.id, identifier, at: Date.now(), followup: true });
+        writeFileSync(RUNNING_PATH, JSON.stringify(watched, null, 2));
+        return session;
+      },
+      stop: defaultStop,
+      comment,
+      link: (id) => sessionLink(id),
+      log,
+    });
+    writeFileSync(FOLLOW_PATH, JSON.stringify(next, null, 2));
+  } catch (err) {
+    logErr(`follow-up pass failed: ${err.message}`);
   }
   const slots = cooling > 0 ? 0 : concurrencySlots(running);
   if (slots === 0) {
@@ -1308,7 +1383,7 @@ export { localTime, workflowFor, buildDispatchArgv, splitCommand, DEFAULT_DISPAT
   shouldAnnounceExpiry,
   countRunningSessions, concurrencySlots, busySessionIds, parseLimitReset, cooldownRemaining,
   agentState, isWorking, findSessionByKey, liveSessionFor, parkForResume, resumeAfterLimit, resumePrompt, resumeArgv, remoteControlUrl, livenessVerdict, agentFor, isBlocked,
-  classifyTranscript, reviewRunning, findGhosts, reapGhosts,
+  classifyTranscript, reviewRunning, sessionLink, follow, findGhosts, reapGhosts,
   blockerKeys };
 
 // Run only when executed directly, not when imported.
