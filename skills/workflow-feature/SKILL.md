@@ -36,7 +36,7 @@ description: The workflow a dispatched session runs for a feature, improvement o
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment list <KEY> | grep -q 'workflow run started' \
-  || "${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment add <KEY> --body "🔧 'feature' workflow run started in session \`$CLAUDE_SESSION_ID\`."
+  || "${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment add <KEY> --body "'feature' workflow run started in session \`${CLAUDE_CODE_SESSION_ID:0:8}\`."
 ```
 
    Every other Linear write in this skill happens in step 5, *after* the workflow returns — which is 20-40
@@ -88,6 +88,7 @@ Workflow({ scriptPath: '.claude/workflows/task-orchestration.js', args: {
   stopAtContract: <true when plan mode is active; omit otherwise>,
   prBase: '<repo.base from the cycler config, default "main"; pass the previous task\'s branch when stacking tasks>',
   branchPrefix: '<repo.branch_prefix from the cycler config, default "claude/">',
+  sessionId: '<output of: echo $CLAUDE_CODE_SESSION_ID — names this session in the board comments>',
   issueId: '<the tracker issue key when the task is driven from one, e.g. "APL-10" — sets the branch name>',
   branch: '<explicit branch override; omit unless you need to force a specific name>',
   models: <per-stage overrides, e.g. { verify: 'haiku' }; omit to use the defaults below>,
@@ -118,6 +119,8 @@ Workflow({ scriptPath: '.claude/workflows/task-orchestration.js', args: {
    - **Never fail the task over Linear.** If a write errors, report it and move on; the task's own
      outcome is unaffected. Entries with `skipped: true` need no action — the `note` says why.
    - Tell the user which writes you performed, and which failed.
+   - **Post nothing else on the issue.** No answers to questions, no recaps, no next steps: the human
+     answers in this session, and the board only carries the workflow's own one-line comments.
 7. Read the returned structured result:
    `{ status, stage, branch, branchCreated, worktree, lockHeld, cleanupNote, contractPath, changedFiles[], summary, commandJournal[], audit, report, confirmed[], notes, fixLog[], commit, commits[], pr, linearWrites[] }`.
    `worktree` is `null` once removed, or a path still on disk. `lockHeld: true` means the shared-tree

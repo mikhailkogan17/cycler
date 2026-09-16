@@ -412,7 +412,7 @@ async function dispatch(issue) {
       issue.id,
       // One line. These land as phone notifications, and a paragraph of route explanation and
       // attach commands is unreadable there — the id is the only part anyone acts on.
-      `⚡ Dispatched to claude session \`${sessionId || '?'}\`.`
+      `Dispatched to \`claude\` session \`${sessionId || '?'}\`.`
     );
   } catch (err) {
     logErr(`dispatched ${issue.identifier} but could not comment: ${err.message}`);
@@ -496,7 +496,7 @@ async function checkLiveness(readAgentsRaw = defaultAgentsRead, readTranscript =
     try {
       await comment(
         rec.issueId,
-        `💀 Session \`${rec.session || '?'}\` died without starting. `
+        `${giveUp ? '💀 ' : ''}Session \`${rec.session || '?'}\` died without starting. `
           + (giveUp ? `Giving up (${attempts}/${MAX_DISPATCH_ATTEMPTS}).` : `Retrying (${attempts + 1}/${MAX_DISPATCH_ATTEMPTS}).`)
       );
     } catch (err) {
@@ -858,13 +858,27 @@ function entryText(e) {
 // limited  — the last assistant entry is the CLI's synthetic limit error, written after `sinceMs`
 // turn     — the last assistant entry ended its turn normally (a question for a human, or a final report)
 // working  — anything else (mid tool call, empty, unparseable)
+// The workflow's own board comments, as they appear in the transcript once the session posts them. A turn
+// that ends after one of these is the session's closing summary, not a question: the finished one ends
+// the watch, the blocked one has already told the board (with the questions) and must not be repeated.
+const RUN_FINISHED_RE = /Workflow run finished/;
+const RUN_BLOCKED_RE = /Workflow run blocked|is waiting for your reply/;
+
 function classifyTranscript(text, sinceMs = 0) {
   let last = null;
+  let finished = false;
+  let reported = false;
   for (const line of String(text || '').split('\n')) {
     if (!line.trim()) continue;
     let e;
     try { e = JSON.parse(line); } catch { continue; }
-    if (e && e.type === 'assistant' && !e.isSidechain) last = e;
+    if (!e || e.isSidechain) continue;
+    if ((Date.parse(e.timestamp) || 0) >= sinceMs) {
+      if (RUN_FINISHED_RE.test(line)) finished = true;
+      if (e.type === 'user' && typeof e.message?.content === 'string') reported = false;
+      if (RUN_BLOCKED_RE.test(line)) reported = true;
+    }
+    if (e.type === 'assistant') last = e;
   }
   if (!last) return { kind: 'working' };
   const ts = Date.parse(last.timestamp) || 0;
@@ -873,7 +887,8 @@ function classifyTranscript(text, sinceMs = 0) {
     return ts >= sinceMs ? { kind: 'limited', text: body, at: ts, uuid: last.uuid } : { kind: 'working' };
   }
   if (last.message && last.message.stop_reason === 'end_turn' && body.trim()) {
-    return { kind: 'turn', text: body, at: ts, uuid: last.uuid };
+    if (finished) return { kind: 'done', at: ts, uuid: last.uuid };
+    return { kind: 'turn', text: body, at: ts, uuid: last.uuid, reported };
   }
   return { kind: 'working' };
 }
@@ -918,10 +933,10 @@ function reviewRunning({ agents = readAgents(defaultAgentsRead), readTranscript 
       limited.push(rec);
       continue;
     }
-    if (!agent || AGENT_GONE_STATES.has(agentState(agent))) { finished.push(rec); continue; }
+    if (!agent || AGENT_GONE_STATES.has(agentState(agent)) || verdict.kind === 'done') { finished.push(rec); continue; }
     if (verdict.kind === 'turn' && rec.notified !== verdict.uuid) {
       rec.notified = verdict.uuid;
-      waiting.push({ ...rec, question: verdict.text, remoteUrl: remoteControlUrl(rec.session, () => JSON.stringify(agents)) });
+      if (!verdict.reported) waiting.push({ ...rec, question: verdict.text, remoteUrl: remoteControlUrl(rec.session, () => JSON.stringify(agents)) });
     }
     keep.push(rec);
   }
@@ -1192,7 +1207,7 @@ async function poll() {
       try {
         await comment(
           rec.issueId,
-          `⏸️ 5h usage window exceeded. Resets at ${localTime(resumesAt)}.`
+          `5h usage window exceeded. Resets at ${localTime(resumesAt)}.`
         );
       } catch (err) {
         logErr(`could not tell ${rec.identifier} it was paused on the usage limit: ${err.message}`);
@@ -1216,7 +1231,7 @@ async function poll() {
       try {
         await comment(
           rec.issueId,
-          `▶️ Resumed by cycler because the usage window reset — session \`${rec.session}\`.`
+          `Resumed by cycler because the usage window reset — session \`${rec.session}\`.`
         );
       } catch (err) {
         logErr(`resumed ${rec.identifier} but could not comment: ${err.message}`);

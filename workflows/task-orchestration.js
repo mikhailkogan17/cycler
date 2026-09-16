@@ -671,7 +671,8 @@ ${taskIsLinearRefOnly ? `0. RESOLVE THE ISSUE FIRST (APL-35). The request above 
      - anything where being wrong is expensive AND the codebase does not imply an answer
 
    Write your best-effort contract either way. List ONLY unresolved PREFERENCE questions in
-   openQuestions. If you resolved something by looking, say so in Risks & assumptions ("chose the header
+   openQuestions, each as ONE string in the form "Question? || option one || option two" — short, no
+   code paths, no preamble; it is read as a phone notification and answered with a single letter. If you resolved something by looking, say so in Risks & assumptions ("chose the header
    subtitle: the axis labels are hidden in both empty states, checked by running the app") so a reviewer
    can challenge the observation rather than re-litigate the question.
 
@@ -852,6 +853,19 @@ linearSync('started', {
   assignSelf: true,
 })
 
+// A question is written "Question? || option || option" (the contract author is told so). Rendered as a
+// bold question with lettered options, so a reply of one letter answers it. Free text stays as-is.
+function formatQuestion(q) {
+  const [head, ...opts] = String(q).split('||').map((x) => x.trim()).filter(Boolean)
+  if (!opts.length) return `**${head}**`
+  return [`**${head}**`, ...opts.map((o, i) => `${String.fromCharCode(65 + i)}. ${o}`)].join('\n')
+}
+function sessionRef() {
+  const id = String(args.sessionId || '').slice(0, 8)
+  if (!id) return 'this session'
+  return args.sessionUrl ? `[${id}](<${args.sessionUrl}>)` : `\`${id}\``
+}
+
 // ---------- APL-36: open questions stop the run BEFORE any code is written ----------
 // A contract with open questions means the harness does not know what it was asked to build. Guessing
 // unattended produces a confident PR for the wrong task, which costs more to review than nothing at all.
@@ -860,18 +874,10 @@ linearSync('started', {
 if (openQuestions.length) {
   linearSync('open-questions', {
     body: [
-      '### The task contract has open questions',
-      '',
-      'The harness could not contract this task unambiguously. Answer these on the issue (or in the task'
-        + ' description) and re-run:',
-      '',
-      ...openQuestions.map((q) => `- ${q}`),
-      '',
-      stopOnOpenQuestions
-        ? '_The run stopped before writing any code. Nothing was branched into, committed, or opened._'
-        : '_The run continued anyway (`stopOnOpenQuestions: false`) — review the resulting PR against these'
-          + ' questions before trusting it._',
-    ].join('\n'),
+      `🙋 Session ${sessionRef()} is waiting for your reply:`,
+      ...openQuestions.map(formatQuestion),
+      stopOnOpenQuestions ? '' : '_The run continued anyway — check the PR against these._',
+    ].filter(Boolean).join('\n\n'),
   })
   if (stopOnOpenQuestions) {
     return await blocked({
@@ -1558,7 +1564,10 @@ if (!noCommit) {
     // The headline is one line. Everything after it exists only when something went differently
     // than "clean run, PR open" — a reader who sees nothing else knows there is nothing else.
     body: [
-      `✅ Workflow run finished${reviewRes ? '' : ' (NOT reviewed)'}. ${pr?.prUrl || 'no PR — branch pushed'}`,
+      pr?.prUrl
+        ? `✅ PR [#${pr.prUrl.split('/').pop()}](${pr.prUrl}) is READY for a human review${reviewRes ? '' : ' (NOT reviewed)'}`
+        : '✅ Branch pushed, no PR opened — needs a human',
+      'Workflow run finished.',
       !reviewRes ? 'The review stage was skipped on the token budget floor — review before merging.' : '',
       followups?.filed?.length ? `Follow-ups filed: ${followups.filed.join(', ')}` : '',
       followups?.failed?.length

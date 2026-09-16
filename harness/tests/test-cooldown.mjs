@@ -217,7 +217,7 @@ t('the resume comment says who resumed it and why, in one line', () => {
     assert.strictEqual(remoteControlUrl('abcd1234', agents), 'https://claude.ai/code/session_NEW1');
     assert.strictEqual(remoteControlUrl('missing', () => '[]'), null);
   } finally { process.env.HOME = prev; }
-  assert.match(readFileSync(POLLER, 'utf8'), /▶️ Resumed by cycler because the usage window reset/);
+  assert.match(readFileSync(POLLER, 'utf8'), /`Resumed by cycler because the usage window reset/);
 });
 
 t('poll() counts resumed sessions against max_concurrent', () => {

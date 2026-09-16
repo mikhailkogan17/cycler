@@ -17,7 +17,7 @@ is in.
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment list <KEY> | grep -q 'workflow run started' \
-  || "${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment add <KEY> --body "🐛 'bug' workflow run started in session \`$CLAUDE_SESSION_ID\`."
+  || "${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment add <KEY> --body "'bug' workflow run started in session \`${CLAUDE_CODE_SESSION_ID:0:8}\`."
 ```
 
 2. **READ `${CLAUDE_PLUGIN_ROOT}/skills/workflow-feature/SKILL.md` and follow it from step 1**, with

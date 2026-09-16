@@ -36,6 +36,22 @@ t('a limit error OLDER than the watch is not (the fake-cooldown bug)', () => {
 t('a limit followed by more work is not limited', () => {
   assert.strictEqual(classifyTranscript(jsonl(limitEntry(T0 + 1), turnEntry(T0 + 2)), T0).kind, 'turn');
 });
+const postEntry = (ts, body) => ({ type: 'assistant', uuid: 'P', timestamp: new Date(ts).toISOString(),
+  message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'Bash', input: { command: `lin issue comment add X --body "${body}"` } }] } });
+const userEntry = (ts) => ({ type: 'user', timestamp: new Date(ts).toISOString(), message: { role: 'user', content: 'b' } });
+t('a closing summary after the run finished is done, not a question (APL-89 false alert)', () => {
+  const v = classifyTranscript(jsonl(postEntry(T0 + 1, '✅ PR #187 is READY\nWorkflow run finished.'),
+    turnEntry(T0 + 2, 'Next steps: 1. Merge #187. Say which and I will do it.')), T0);
+  assert.strictEqual(v.kind, 'done');
+});
+t('a turn after the blocked comment is already reported; a later reply re-arms it', () => {
+  const blocked = postEntry(T0 + 1, '🛑 Workflow run blocked at contract');
+  assert.strictEqual(classifyTranscript(jsonl(blocked, turnEntry(T0 + 2)), T0).reported, true);
+  assert.strictEqual(classifyTranscript(jsonl(blocked, userEntry(T0 + 3), turnEntry(T0 + 4)), T0).reported, false);
+});
+t('a finished marker from BEFORE the watch does not end a new run', () => {
+  assert.strictEqual(classifyTranscript(jsonl(postEntry(T0 - 5, 'Workflow run finished.'), turnEntry(T0 + 2)), T0).kind, 'turn');
+});
 t('mid tool call is working', () => {
   assert.strictEqual(classifyTranscript(jsonl(toolEntry(T0 + 1)), T0).kind, 'working');
 });

@@ -36,7 +36,7 @@ produced a second contradicting comment on the same issue and a human had to rec
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment list <KEY> | grep -q 'workflow run started' \
-  || "${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment add <KEY> --body "🔎 'research' workflow run started in session \`$CLAUDE_SESSION_ID\`."
+  || "${CLAUDE_PLUGIN_ROOT}/poller/lin" issue comment add <KEY> --body "'research' workflow run started in session \`${CLAUDE_CODE_SESSION_ID:0:8}\`."
 ```
 
 This is for the humans watching the board. The poller does not read it: it proves a session started
