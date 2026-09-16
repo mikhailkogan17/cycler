@@ -53,6 +53,8 @@ await t('a human Linear comment resumes; the app\'s own does not', async () => {
   await followUp([issue([{ createdAt: at(5), body: 'B', user: { id: 'u' }, botActor: null }])], reg(), d, T + 10);
   assert.strictEqual(calls.resume.length, 1);
   assert.strictEqual(isHumanLinear({ createdAt: at(5), user: null, botActor: { id: 'b' } }, T), false);
+  // The shape cycler's own comments really come back in: the app user, no botActor (the APL-90 loop).
+  assert.strictEqual(isHumanLinear({ createdAt: at(5), user: { id: 'c', app: true, isMe: true }, botActor: null }, T), false);
 });
 await t('agent-written, bot and old GitHub comments are ignored', () => {
   assert.strictEqual(isHumanGithub({ user: { login: 'me' }, created_at: at(5), body: 'x\n🤖 Generated with [Claude Code](y)' }, T), false);

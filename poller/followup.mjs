@@ -21,9 +21,12 @@ function isHumanGithub(c, since) {
   return !AGENT_BODY_RE.test(String(c.body || ''));
 }
 
-// Linear: an app comment has a botActor; a person's has a user and none.
+// Linear: cycler's own comments (actor=app) come back with `user` set to the app user and NO botActor,
+// so `user && !botActor` read them as a person's — and every "Resumed…" comment resumed the session
+// again. An app user, or the viewer itself, is never a human.
 function isHumanLinear(c, since) {
-  return Boolean(c && c.user && !c.botActor && (Date.parse(c.createdAt) || 0) > since);
+  return Boolean(c && c.user && !c.user.app && !c.user.isMe && !c.botActor
+    && (Date.parse(c.createdAt) || 0) > since);
 }
 
 function followupPrompt(identifier, pr, links) {

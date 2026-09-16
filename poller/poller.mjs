@@ -1197,7 +1197,7 @@ async function poll() {
            # what makes a blocking link mean something to the poller: without it the board can say
            # an issue is blocked and the poller will cheerfully dispatch it anyway.
            inverseRelations { nodes { type issue { identifier state { type } } } }
-           comments(last: 10) { nodes { createdAt body user { id } botActor { id } } }
+           comments(last: 10) { nodes { createdAt body user { id app isMe } botActor { id } } }
          }
        }
      }`,
