@@ -1064,7 +1064,7 @@ function resumeAfterLimit(runResume = defaultResume, read = defaultAgentsRead) {
       const agent = agents.find((a) => a && String(a.id || '') === rec.session);
       const carried = runResume(rec.session, resumePrompt(rec),
         agent || { id: rec.session, name: `[${rec.identifier}] resumed` });
-      if (typeof carried === 'string' && carried) { rec.previous = rec.session; rec.session = carried; }
+      if (typeof carried === 'string' && carried && carried !== rec.session) { rec.previous = rec.session; rec.session = carried; }
       rec.remoteUrl = remoteControlUrl(rec.session, read);
       log(`resumed ${rec.identifier} session=${rec.session}${rec.previous ? ` (was ${rec.previous}, stopped)` : ''} `
         + `after the usage window reset (attempt ${rec.attempts} of ${MAX_DISPATCH_ATTEMPTS}) — continuing automatically`);
@@ -1104,32 +1104,66 @@ function resumePrompt(rec) {
     + `create a second branch or worktree.`;
 }
 
-// Resume after a usage limit, WITHOUT a human. `claude respawn` keeps the id but cannot take a prompt, so
-// the session sat idle until someone typed "continue". Instead the conversation is resumed with the
-// continue prompt, under the issue's `[KEY]` name, and the old session is stopped — so there is exactly
-// one live session per issue and the ghost reaper recognises the new one as the owner, never a copy
-// (b9bc6f60, a32900ea, 2ccbba80 were copies because the old session kept running and the name was the
-// prompt). Returns the id that now carries the run.
+// Continue a session WITHOUT a human, WITHOUT forking, and with the CONFIGURED command's flags.
+//  - `claude --resume` always creates a new session id, and it drops every flag the config command
+//    set (APL-98's 312a2dfd lost --remote-control and vanished from Desktop and claude.ai).
+//  - `claude respawn <id>` keeps the id and restarts with the job's saved flags, but takes no prompt.
+// So: the job's saved flags are reset to the ones dispatch.command gives this issue, the job is
+// respawned (same id, those flags), and the prompt is typed into `claude attach <id>` by
+// send-prompt.exp, which then detaches. Returns the id that carries the run — always the same one.
+const SEND_PROMPT = join(fileURLToPath(new URL('.', import.meta.url)), 'send-prompt.exp');
 function defaultResume(session, prompt, agent) {
-  const argv = resumeArgv(agent || { id: session }, prompt);
-  const out = execFileSync(CLAUDE_BIN, argv, {
-    cwd: (agent && agent.cwd) || REPO_PATH,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'ignore'],
-    timeout: 30_000,
-    env: { ...process.env, PATH: [...PATH_PREPEND, process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin'].join(':') },
+  const env = { ...process.env, CLAUDE_BIN, PATH: [...PATH_PREPEND, process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin'].join(':') };
+  const name = String((agent && agent.name) || '');
+  const key = (name.match(/^\[([A-Z][A-Z0-9]*-\d+)\]/) || [])[1];
+  if (key && applyConfiguredFlags(session, key, name)) {
+    execFileSync(CLAUDE_BIN, ['respawn', session], { stdio: 'ignore', timeout: 30_000, env });
+  }
+  execFileSync('/usr/bin/expect', sendPromptArgv(session, prompt), {
+    cwd: (agent && agent.cwd) || REPO_PATH, stdio: 'ignore', timeout: 90_000, env,
   });
-  const m = out.match(/backgrounded\s+·\s+(\S+)/);
-  if (!m) throw new Error(`resume printed no session id: ${out.trim().split('\n')[0] || 'no output'}`);
-  try { defaultStop(session); } catch { /* already stopped */ }
-  return m[1];
+  return session;
 }
 
-function resumeArgv(agent, prompt, identifier = '') {
-  const name = String(agent.name || '');
-  const label = /^\[[A-Z][A-Z0-9]*-\d+\]/.test(name) ? name : `[${identifier}] resumed`;
-  return ['--background', '--name', label.slice(0, 80), '--permission-mode', 'auto',
-    '--resume', String(agent.sessionId || agent.id), prompt];
+// The flags dispatch.command gives an issue, minus the binary, --background and the prompt.
+function configuredFlags(identifier, sessionName) {
+  const argv = buildDispatchArgv({ identifier, title: '' }, '', sessionName).slice(1);
+  const flags = [];
+  for (let i = 0; i < argv.length; i++) {
+    const tok = argv[i];
+    if (tok === '--background' || tok === '--bg') continue;
+    if (!tok.startsWith('-')) continue; // positional: the prompt
+    flags.push(tok);
+    const next = argv[i + 1];
+    if (next !== undefined && !next.startsWith('-') && i + 1 < argv.length - 1) { flags.push(next); i++; }
+  }
+  return flags;
+}
+
+// Rewrites the job's saved respawn flags to the configured ones. True when the job file was changed.
+function applyConfiguredFlags(session, identifier, sessionName, jobsDir = join(homedir(), '.claude', 'jobs')) {
+  const file = join(jobsDir, session, 'state.json');
+  try {
+    const st = JSON.parse(readFileSync(file, 'utf8'));
+    const want = configuredFlags(identifier, sessionName);
+    const keepModel = [];
+    const old = Array.isArray(st.respawnFlags) ? st.respawnFlags : [];
+    const m = old.indexOf('--model');
+    if (m >= 0 && !want.includes('--model')) keepModel.push('--model', old[m + 1]);
+    const next = [...want, ...keepModel];
+    if (JSON.stringify(next) === JSON.stringify(old)) return false;
+    st.respawnFlags = next;
+    writeFileSync(file, JSON.stringify(st, null, 2));
+    log(`${identifier} session ${session} restored to the configured dispatch flags`);
+    return true;
+  } catch (err) {
+    logErr(`could not apply configured flags to ${session}: ${err.message}`);
+    return false;
+  }
+}
+
+function sendPromptArgv(session, prompt) {
+  return [SEND_PROMPT, String(session), String(prompt).replace(/\s*\n\s*/g, ' ')];
 }
 
 // The remote-control link a session announces in its own transcript (a `bridge_status` line).
@@ -1382,7 +1416,7 @@ async function poll() {
 export { localTime, workflowFor, buildDispatchArgv, splitCommand, DEFAULT_DISPATCH, dispatchBudget, readClaudeExpiry,
   shouldAnnounceExpiry,
   countRunningSessions, concurrencySlots, busySessionIds, parseLimitReset, cooldownRemaining,
-  agentState, isWorking, findSessionByKey, liveSessionFor, parkForResume, resumeAfterLimit, resumePrompt, resumeArgv, remoteControlUrl, livenessVerdict, agentFor, isBlocked,
+  agentState, isWorking, findSessionByKey, liveSessionFor, parkForResume, resumeAfterLimit, resumePrompt, sendPromptArgv, configuredFlags, applyConfiguredFlags, remoteControlUrl, livenessVerdict, agentFor, isBlocked,
   classifyTranscript, reviewRunning, sessionLink, follow, findGhosts, reapGhosts,
   blockerKeys };
 

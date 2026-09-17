@@ -24,7 +24,7 @@ process.env.CYCLER_HOME = DIR;
 
 const POLLER = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'poller', 'poller.mjs');
 const { parseLimitReset, cooldownRemaining, busySessionIds, parkForResume, resumeAfterLimit,
-  resumePrompt, resumeArgv, remoteControlUrl } =
+  resumePrompt, sendPromptArgv, configuredFlags, applyConfiguredFlags, remoteControlUrl } =
   await import(POLLER + '?cool=1');
 assert.notStrictEqual(DIR, join(process.env.HOME || '', '.cycler'), 'the test is writing to the real state dir');
 
@@ -182,15 +182,25 @@ t('resume is ALWAYS attempted, even when the session already looks alive', () =>
   assert.strictEqual(out.resumed.length, 1);
 });
 
-t('resume continues automatically under the [KEY] name and stops the old session', () => {
-  const argv = resumeArgv({ id: '8b56d07d', sessionId: 'u-1', name: '[APL-87] Flow B' }, 'go on');
-  assert.deepStrictEqual(argv.slice(-3), ['--resume', 'u-1', 'go on'], 'the continue prompt must ride the resume');
-  assert.strictEqual(argv[argv.indexOf('--name') + 1], '[APL-87] Flow B', 'a prompt-named copy is reaped as a ghost');
-  const ghostName = resumeArgv({ id: 'x', name: "The account's Claude usage window" }, 'p', 'APL-9');
-  assert.strictEqual(ghostName[ghostName.indexOf('--name') + 1], '[APL-9] resumed');
+t('resume keeps the session id and the configured flags — never --resume', () => {
+  const argv = sendPromptArgv('8b56d07d', 'go\non');
+  assert.deepStrictEqual(argv.slice(1), ['8b56d07d', 'go on'], 'the prompt must be one line for the TUI');
+  const flags = configuredFlags('APL-9', '[APL-9] x');
+  assert.ok(flags.includes('--remote-control'), 'resumed sessions must keep Remote Control');
+  assert.ok(!flags.includes('--background'));
+  assert.strictEqual(flags[flags.indexOf('--name') + 1], '[APL-9] x');
+  assert.ok(!flags.some((f) => f.includes('{') || f === ' APL-9'), 'the prompt must not become a flag');
+  const jobs = mkdtempSync(join(tmpdir(), 'cycler-jobs-'));
+  mkdirSync(join(jobs, 'abc'));
+  writeFileSync(join(jobs, 'abc', 'state.json'), JSON.stringify({ respawnFlags: ['--name', 'n', '--model', 'opus'] }));
+  assert.strictEqual(applyConfiguredFlags('abc', 'APL-9', '[APL-9] x', jobs), true);
+  const saved = JSON.parse(readFileSync(join(jobs, 'abc', 'state.json'), 'utf8')).respawnFlags;
+  assert.ok(saved.includes('--remote-control') && saved.includes('opus'));
+  assert.strictEqual(applyConfiguredFlags('abc', 'APL-9', '[APL-9] x', jobs), false, 'unchanged flags must not respawn');
   const src = readFileSync(POLLER, 'utf8');
   const fn = /function defaultResume[\s\S]*?\n}\n/.exec(src)[0];
-  assert.match(fn, /defaultStop\(session\)/, 'the old session must be stopped, or it becomes a duplicate');
+  assert.doesNotMatch(fn, /--resume|defaultStop/, 'a resume must not fork or stop the session');
+  assert.match(fn, /return session;/);
 });
 
 t('resumeAfterLimit re-watches the NEW session id the resume returns', () => {

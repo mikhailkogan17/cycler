@@ -51,6 +51,8 @@ dispatch:
   # "[KEY] <title>", so the argument can never begin with a dash. Anyone who can assign to the agent already
   # has shell-equivalent access to this machine (see the Security section of the README), so this is
   # not an escalation — it is a footgun worth not building into your own template.
+  # The same flags are applied when cycler RESUMES a session (usage-limit reset, review comments):
+  # the session keeps its id and is restarted with these flags, never forked with --resume.
   command: >
     claude --background --name "{session}" --remote-control "{session}"
     --remote-control-session-name-prefix linear --permission-mode auto

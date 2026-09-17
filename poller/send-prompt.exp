@@ -1,0 +1,20 @@
+#!/usr/bin/expect -f
+# Types one prompt into an existing background session and detaches, so the session keeps its id.
+# `claude attach` wakes a stopped session; Ctrl+Z leaves it running. Usage: send-prompt.exp <id> <prompt>
+set timeout 60
+set id [lindex $argv 0]
+set msg [lindex $argv 1]
+set bin [expr {[info exists env(CLAUDE_BIN)] ? $env(CLAUDE_BIN) : "claude"}]
+spawn -noecho $bin attach $id
+expect {
+  -re {❯} {}
+  timeout { exit 2 }
+  eof { exit 3 }
+}
+after 1000
+send -- $msg
+after 1000
+send "\r"
+after 3000
+send "\x1a"
+expect eof
