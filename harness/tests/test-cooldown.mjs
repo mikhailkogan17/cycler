@@ -21,6 +21,10 @@ import { tmpdir } from 'node:os';
 // the real ~/.cycler and a test run could disturb live sessions.
 const DIR = mkdtempSync(join(tmpdir(), 'cycler-cooldown-'));
 process.env.CYCLER_HOME = DIR;
+// And the config: without this the module reads the REAL ~/.config/cycler/config.yaml, and the
+// resume-flags case below judged whatever dispatch.command this machine happens to have (a live
+// `--model` there made it fail on the shipped default's behaviour).
+process.env.CYCLER_CONFIG = join(DIR, 'no-config.yaml');
 
 const POLLER = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'poller', 'poller.mjs');
 const { parseLimitReset, cooldownRemaining, busySessionIds, parkForResume, resumeAfterLimit,

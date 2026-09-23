@@ -128,6 +128,10 @@ It should print `poll ok: N delegated, M processed total`. That is the whole loo
 continue to step 8 until it does: installing a launchd job around a poll that fails gives you a job
 that fails every 180 seconds and looks, from `launchctl list`, exactly like one that works.
 
+If it prints `poll degraded: …` instead, the poll ran but refused to dispatch or found dead sessions;
+the line names why. `not dispatching, … — run /login` means the Claude credential is logged out or
+unreadable: run `/login` in any Claude Code session, then poll again.
+
 ## 8. Install the launchd polling job
 
 Resolve absolute paths first — **launchd has a minimal PATH and will not find these by name**:
@@ -190,7 +194,7 @@ launchctl list | grep "$LABEL"
 sleep 5 && tail -3 ~/.cycler/poller.log
 ```
 
-Report the last `poll ok` line. If the log is empty or shows an error, say so — do not report success
+Report the last `poll ok` line. If it is `poll degraded`, report that line verbatim. If the log is empty or shows an error, say so — do not report success
 because the job loaded. A loaded job that fails every poll looks identical to a working one from
 `launchctl list`.
 

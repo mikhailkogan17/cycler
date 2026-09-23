@@ -35,7 +35,13 @@ const ISSUE = {
 };
 
 const CWD = '/r/app';
-function poll({ script = {}, processed = null, pending = null, extraCfg = '', agents = [], transcripts = {} } = {}) {
+// A fresh credential unless a case says otherwise: the pre-flight refuses to dispatch on one it cannot
+// read, and a test must not depend on whatever this machine's keychain holds today.
+const HOUR = 3600_000;
+const credJson = (o) => JSON.stringify({ claudeAiOauth: { accessToken: 'secret-access', refreshToken: 'secret-refresh', scopes: [], ...o } });
+const FRESH = credJson({ expiresAt: Date.now() + 8 * HOUR, refreshTokenExpiresAt: Date.now() + 30 * 24 * HOUR });
+function poll({ script = {}, processed = null, pending = null, extraCfg = '', agents = [], transcripts = {},
+  cred = FRESH, hold = null } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'cycler-home-'));
   const agentsFile = join(home, 'agents.json');
   writeFileSync(agentsFile, agents === null ? 'not json' : JSON.stringify(agents));
@@ -47,6 +53,9 @@ function poll({ script = {}, processed = null, pending = null, extraCfg = '', ag
   writeFileSync(join(home, 'token.json'), JSON.stringify({ access_token: 'tok-1', refresh_token: 'refresh-1' }));
   if (processed) writeFileSync(join(home, 'processed.json'), JSON.stringify(processed));
   if (pending) writeFileSync(join(home, 'pending.json'), JSON.stringify(pending));
+  if (hold) writeFileSync(join(home, 'auth-hold.json'), JSON.stringify(hold));
+  const credFile = join(home, 'credentials.json');
+  writeFileSync(credFile, cred);
   const scriptPath = join(home, 'script.json');
   const journal = join(home, 'journal.ndjson');
   writeFileSync(scriptPath, JSON.stringify(script));
@@ -59,12 +68,13 @@ function poll({ script = {}, processed = null, pending = null, extraCfg = '', ag
     encoding: 'utf8',
     env: { ...process.env, CYCLER_HOME: home, CYCLER_CONFIG: cfgPath, CLAUDE_BIN: process.execPath,
       DOUBLE_SCRIPT: scriptPath, DOUBLE_JOURNAL: journal, CLAUDE_PROJECT_DIR: home,
-      HOME: home, CYCLER_AGENTS_FILE: agentsFile },
+      HOME: home, CYCLER_AGENTS_FILE: agentsFile, CYCLER_CREDENTIALS_FILE: credFile, CYCLER_NO_NOTIFY: '1' },
   });
   const entries = readFileSync(journal, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
   const read = (f) => existsSync(join(home, f)) ? JSON.parse(readFileSync(join(home, f), 'utf8')) : null;
   return { r, entries, home,
-    processed: read('processed.json'), pending: read('pending.json'),
+    processed: read('processed.json'), pending: read('pending.json'), hold: read('auth-hold.json'),
+    out: `${r.stdout}\n${r.stderr}`,
     spawns: entries.filter((e) => e.kind === 'spawn'),
     comments: entries.filter((e) => e.op === 'comment'),
     liveChecks: entries.filter((e) => e.op === 'issueComments') };
@@ -181,6 +191,64 @@ t('a fresh dispatch records itself as pending, so it can be judged later', () =>
   assert.strictEqual(p.pending.length, 1, 'a dispatch that is not tracked can never be found dead');
   assert.strictEqual(p.pending[0].identifier, 'ABC-1');
   assert.strictEqual(p.pending[0].attempts, 1);
+});
+
+// ─── logged out: refuse up front, and never blind-retry a session that died of it ─────────────
+// 2026-09-23: the keychain read back expiresAt 0, the poller dispatched anyway, six sessions died on
+// "Login expired · Please run /login", and every poll logged `poll ok`. These run the shipped poller.
+const EPOCH_ZERO = credJson({ expiresAt: 0, refreshTokenExpiresAt: Date.now() + 30 * 24 * HOUR });
+const loggedOut = { type: 'assistant', timestamp: now(), isApiErrorMessage: true, error: 'authentication_failed',
+  message: { model: '<synthetic>', content: [{ type: 'text', text: 'Login expired · Please run /login' }] } };
+const outcome = (p) => (p.out.match(/poll (ok|degraded)[^\n]*/) || [''])[0];
+
+t('an unreadable credential dispatches nothing, marks nothing and says so on the outcome line', () => {
+  const p = poll({ script: { issues: [ISSUE] }, cred: EPOCH_ZERO });
+  assert.strictEqual(p.spawns.length, 0, 'it dispatched onto an epoch-zero credential — the incident');
+  assert.ok(!(p.processed || []).includes('uuid-1'), 'a refused issue was marked processed and would never go out');
+  assert.deepStrictEqual(p.pending || [], [], 'a refusal is not a dispatch and must not be tracked as one');
+  assert.match(outcome(p), /^poll degraded: not dispatching, .*unreadable.*run \/login/);
+  assert.doesNotMatch(p.out, /poll ok/, '`poll ok` was printed on a poll that refused to dispatch');
+  assert.doesNotMatch(p.out, /secret-(access|refresh)/, 'a token value reached the log');
+});
+
+t('a refusal does not spend a re-dispatch attempt', () => {
+  // A dead dispatch at attempt 1 is un-processed for a retry; the refusal then holds it. Its attempt
+  // count must not move, and it must not be put back into processed.json.
+  const p = poll({ ...base, pending: stale({ attempts: 1 }), agents: [], cred: EPOCH_ZERO });
+  assert.strictEqual(p.spawns.length, 0);
+  assert.ok(!(p.processed || []).includes('uuid-1'), 'refused, yet marked processed');
+  assert.ok(!(p.pending || []).some((r) => r.attempts > 1), 'a refusal was counted as an attempt');
+});
+
+t('the same poll with a readable credential does dispatch — the refusal can also stay quiet', () => {
+  const p = poll({ script: { issues: [ISSUE] } });
+  assert.strictEqual(p.spawns.length, 1);
+  assert.match(outcome(p), /^poll ok:/);
+});
+
+t('a session that died logged out is not retried, is un-processed, and the board is told', () => {
+  const p = poll({ ...base, pending: stale({ attempts: 1 }), agents: [agent({ state: 'idle' })],
+    transcripts: { 'sess-1': [loggedOut] } });
+  assert.strictEqual(p.spawns.length, 0, 'it re-dispatched onto the credential the last session died of');
+  assert.ok(!(p.processed || []).includes('uuid-1'), 'left processed — it would never go out after a login');
+  assert.deepStrictEqual(p.pending, [], 'the pending record must be cleared, not left half-done');
+  const body = p.comments.map((c) => c.variables.body).find((b) => /logged out/.test(b));
+  assert.ok(body, 'nothing on the issue said it died logged out');
+  assert.match(body, /\/login/);
+  assert.ok(!deadBody(p), 'it was reported as an ordinary dead dispatch with a retry');
+  assert.ok(p.hold && p.hold.reason === 'Login expired', 'no auth hold was recorded');
+  assert.match(outcome(p), /^poll degraded: .*ABC-1 died logged out/);
+});
+
+t('the auth hold refuses until the credential changes, then lifts', () => {
+  const at = Date.now() + 8 * HOUR;
+  const cred = credJson({ expiresAt: at, refreshTokenExpiresAt: Date.now() + 30 * 24 * HOUR });
+  const held = poll({ script: { issues: [ISSUE] }, cred, hold: { expiresAt: at, reason: 'Login expired', identifier: 'ABC-1' } });
+  assert.strictEqual(held.spawns.length, 0, 'dispatched onto the credential a session just died of');
+  assert.match(outcome(held), /^poll degraded: not dispatching, a dispatched session died logged out/);
+  const relogged = poll({ script: { issues: [ISSUE] }, cred, hold: { expiresAt: at - HOUR, reason: 'Login expired' } });
+  assert.strictEqual(relogged.spawns.length, 1, 'a new credential did not release the queue');
+  assert.strictEqual(relogged.hold, null, 'the hold outlived the login');
 });
 
 // ─── comments stay readable ──────────────────────────────────────────────────

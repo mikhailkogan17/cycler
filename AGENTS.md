@@ -117,6 +117,19 @@ Environment overrides exist for the values launchd needs to force without editin
 - **`dispatch.path_prepend`** exists because launchd hands a job `/usr/bin:/bin:/usr/sbin:/sbin`. The
   session inherits it and cannot find `node`, `gh`, `claude` or `lin`. An interactive session never
   sees this, which is why it only appears once dispatch is automated.
+- **Credential pre-flight.** Before dispatching, the poller reads the Claude credential's *expiries*
+  from the keychain — never the token values. It refuses to dispatch if the access expiry is
+  missing or unreadable (the 1970-01-01 case), or if the access token is stale and its refresh token
+  cannot renew it. A stale access token with a live refresh token lets one issue out, so exactly one
+  process refreshes. A refusal logs, notifies once, and leaves the issue unprocessed with no attempt
+  spent.
+- **Logged-out sessions are terminal, not retried.** `classifyAuthFailure` reads a dispatched
+  session's transcript for the CLI's synthetic `Login expired` / `Please run /login` /
+  `Could not refresh your login` error. On a match the issue is un-processed, its pending entry
+  dropped, the issue commented, and `~/.cycler/auth-hold.json` written. The hold makes the
+  pre-flight refuse until the credential in the keychain changes (a `/login`).
+- **`poll ok` means healthy.** A poll that refused or found dead sessions logs `poll degraded: …`
+  instead — one greppable line.
 - **Every dispatch and every failure posts a comment.** Without the failure comment, a failed
   dispatch is indistinguishable from an issue the agent never saw.
 - **Idempotent** via `processed.json`; completed and canceled issues are skipped; a failed dispatch

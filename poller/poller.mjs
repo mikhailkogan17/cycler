@@ -30,7 +30,7 @@
 
 import { spawn, exec, execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from 'node:fs';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -438,12 +438,17 @@ async function dispatch(issue) {
 // as its first act (skills/workflow-feature step 3, skills/workflow-research step 1b). It is checked here, on a LATER
 // poll, because the check has to outlive the poll that dispatched: asking immediately would only ever
 // see a session that has not got there yet.
-async function checkLiveness(readAgentsRaw = defaultAgentsRead, readTranscript = defaultTranscriptRead) {
+//
+// Returns what it found, for the poll's outcome line: `dead` (retried or given up) and `authDead`
+// (died logged out — not retried at all, see classifyAuthFailure).
+async function checkLiveness(readAgentsRaw = defaultAgentsRead, readTranscript = defaultTranscriptRead,
+  readCred = defaultCredentialRead) {
+  const found = { dead: [], authDead: [] };
   const pending = loadJson(PENDING_PATH, []);
-  if (!pending.length) return;
+  if (!pending.length) return found;
   const now = Date.now();
   const due = pending.filter((r) => now - r.at >= START_GRACE_MS);
-  if (!due.length) return;
+  if (!due.length) return found;
 
   const processed = new Set(loadJson(STATE_PATH, []));
   const keep = pending.filter((r) => now - r.at < START_GRACE_MS);
@@ -454,13 +459,40 @@ async function checkLiveness(readAgentsRaw = defaultAgentsRead, readTranscript =
   if (agents === null) {
     logErr('liveness check skipped: the session registry is unreadable');
     writeFileSync(PENDING_PATH, JSON.stringify(pending, null, 2));
-    return;
+    return found;
   }
 
   for (const rec of due) {
     const agent = agentFor(rec, agents);
     let transcript = '';
     if (agent) { try { transcript = readTranscript({ session: String(agent.id) }, agent); } catch { transcript = ''; } }
+    // Before the liveness verdict: a session that died logged out is dead whatever else the registry
+    // says, and re-dispatching it only starts another session on the same dead credential. So no
+    // retry and no attempt spent — the pending record is dropped and the issue un-processed, so it
+    // goes out cleanly on the first poll after a login, which the hold below waits for.
+    const authReason = classifyAuthFailure(transcript, rec.at);
+    if (authReason) {
+      found.authDead.push({ identifier: rec.identifier, reason: authReason });
+      logErr(`dead dispatch: ${rec.identifier} session=${rec.session || 'unknown'} died logged out `
+        + `("${authReason}") — not retrying; run /login`);
+      try {
+        writeFileSync(AUTH_HOLD_PATH, JSON.stringify(
+          { expiresAt: readClaudeExpiry(readCred), reason: authReason, identifier: rec.identifier, at: now }, null, 2));
+      } catch (err) {
+        logErr(`  and could not record the auth hold: ${err.message}`);
+      }
+      // No notification here: the hold makes this same poll's pre-flight refuse, and that notifies.
+      try {
+        await comment(rec.issueId,
+          `🔑 Session ${sessionLink(rec.session)} died logged out (${authReason}). Not retrying — `
+            + `run \`/login\`; it goes out again on the next poll.`);
+      } catch (err) {
+        logErr(`  and could not comment: ${err.message}`);
+      }
+      processed.delete(rec.issueId);
+      stateChanged = true;
+      continue;
+    }
     const verdict = livenessVerdict(agent, transcript, rec.at);
     if (verdict === 'unknown') { keep.push(rec); continue; }
     if (verdict === 'alive') {
@@ -494,6 +526,7 @@ async function checkLiveness(readAgentsRaw = defaultAgentsRead, readTranscript =
 
     const attempts = (rec.attempts || 1);
     const giveUp = attempts >= MAX_DISPATCH_ATTEMPTS;
+    found.dead.push({ identifier: rec.identifier, giveUp });
     logErr(
       `dead dispatch: ${rec.identifier} session=${rec.session || 'unknown'} never replied ` +
         `within ${START_GRACE_MS / 1000}s (attempt ${attempts}/${MAX_DISPATCH_ATTEMPTS})`
@@ -519,6 +552,7 @@ async function checkLiveness(readAgentsRaw = defaultAgentsRead, readTranscript =
 
   if (stateChanged) writeFileSync(STATE_PATH, JSON.stringify([...processed], null, 2));
   writeFileSync(PENDING_PATH, JSON.stringify(keep, null, 2));
+  return found;
 }
 
 // The session a pending record refers to: by id, else the newest `[KEY]`-named one (dispatch may
@@ -579,7 +613,12 @@ const REFRESH_SKEW_MS = 60_000;
 
 // Keychain first: that is where the CLI puts it on macOS. The file is the fallback the CLI uses
 // where there is no keychain, and reading it costs nothing when it is absent.
+// CYCLER_CREDENTIALS_FILE replaces both, for tests: the pre-flight refuses on an unreadable
+// credential, so a poller driven from a test needs one it can read without touching the keychain.
 function defaultCredentialRead() {
+  if (process.env.CYCLER_CREDENTIALS_FILE) {
+    try { return readFileSync(process.env.CYCLER_CREDENTIALS_FILE, 'utf8'); } catch { return null; }
+  }
   try {
     return execFileSync('security', ['find-generic-password', '-s', CRED_SERVICE, '-w'],
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
@@ -588,24 +627,115 @@ function defaultCredentialRead() {
   }
 }
 
-function readClaudeExpiry(read = defaultCredentialRead) {
+// The expiries only — never the token values, which nothing here needs and nothing here may log.
+function readClaudeCredential(read = defaultCredentialRead) {
   try {
     const raw = read();
     if (!raw) return null;
-    const at = (JSON.parse(raw).claudeAiOauth || {}).expiresAt;
-    return Number.isFinite(at) ? at : null;
+    const o = JSON.parse(raw).claudeAiOauth;
+    if (!o || typeof o !== 'object') return null;
+    const num = (v) => (Number.isFinite(v) ? v : null);
+    return { expiresAt: num(o.expiresAt), refreshExpiresAt: num(o.refreshTokenExpiresAt), hasRefresh: Boolean(o.refreshToken) };
   } catch {
     return null;
   }
 }
 
-// How many issues one poll may dispatch. An unreadable credential yields NO limit on purpose: a
-// machine whose keychain this process cannot read must behave exactly as it did before this
-// existed. Degrading to "dispatch nothing" would turn an unreadable keychain into a silent stall,
-// which is the failure mode every other guard in this file is written to avoid.
+function readClaudeExpiry(read = defaultCredentialRead) {
+  const cred = readClaudeCredential(read);
+  return cred ? cred.expiresAt : null;
+}
+
+// Anything before this is not an expiry, it is a field that failed to be one: epoch zero is what the
+// keychain held on 2026-09-23 after a session exited mid-refresh, and a seconds-for-milliseconds
+// value lands in 1970 too.
+const PLAUSIBLE_EXPIRY_MS = Date.UTC(2020, 0, 1);
+
+// ── Pre-flight ───────────────────────────────────────────────────────────────────────────────
+// Whether this poll may dispatch at all, and how many. It used to fail OPEN on an unreadable
+// credential, on the theory that a keychain launchd cannot read should not stall the queue. The
+// launchd log settles that: this process reads the keychain on every poll. And the one time the read
+// came back unusable — `expiresAt: 0` after a session exited mid-refresh, 2026-09-23 — the account
+// WAS logged out, and failing open sent six sessions to die on "Login expired · Please run /login"
+// while every poll logged `poll ok`. So "cannot tell" now means "not safe".
+//
+// An expired ACCESS token is still not a refusal. It lasts 8 hours and the CLI renews it from the
+// refresh token on the next session it starts — APL-97 and APL-98 went out on 2026-09-16 against an
+// access token 13 hours stale and both ran. Refusing there would stall the queue every night until
+// someone ran /login, which was never the fix. What decides "logged out" is the REFRESH token: missing,
+// expired, or unknown means no session can renew anything, and that is a refusal. With it valid, one
+// issue goes out so exactly one process performs the refresh (see "The refresh race").
+//
+// `hold` is the credential a dispatched session already died of (see classifyAuthFailure). While the
+// keychain still holds that same credential, dispatching again is the burn this exists to stop; a
+// /login or a refresh by anyone changes expiresAt and lifts it.
+//
+// Returns { budget } or { budget: 0, refuse }. `refuse` is the one-line reason for the log.
+function credentialPreflight(cred, now = Date.now(), skewMs = REFRESH_SKEW_MS, hold = null) {
+  const at = cred && cred.expiresAt;
+  if (!Number.isFinite(at) || at < PLAUSIBLE_EXPIRY_MS) {
+    return { budget: 0, refuse: `claude credential expiry is unreadable (${Number.isFinite(at) ? new Date(at).toISOString() : at == null ? 'missing' : String(at)})` };
+  }
+  if (hold && hold.expiresAt === at) {
+    return { budget: 0, refuse: `a dispatched session died logged out (${hold.reason}) and the credential has not changed since` };
+  }
+  if (dispatchBudget(at, now, skewMs) === Infinity) return { budget: Infinity };
+  const r = cred.refreshExpiresAt;
+  if (!cred.hasRefresh || !Number.isFinite(r) || r - now <= skewMs) {
+    const why = !cred.hasRefresh ? 'no refresh token' : !Number.isFinite(r) ? 'refresh token expiry unknown' : 'refresh token expired';
+    return { budget: 0, refuse: `claude access token expired ${new Date(at).toISOString()} and cannot be renewed (${why})` };
+  }
+  return { budget: 1 };
+}
+
+// The access-token half, kept as its own function because the refresh race is its own rule.
 function dispatchBudget(expiresAt, now = Date.now(), skewMs = REFRESH_SKEW_MS) {
-  if (!Number.isFinite(expiresAt)) return Infinity;
+  if (!Number.isFinite(expiresAt)) return 0;
   return expiresAt - now > skewMs ? Infinity : 1;
+}
+
+// A session that died logged out. Kept until the credential changes, so no poll re-dispatches onto
+// the same dead login. See credentialPreflight().
+const AUTH_HOLD_PATH = join(DIR, 'auth-hold.json');
+
+// ── Terminal auth failures ───────────────────────────────────────────────────────────────────
+// What the CLI writes into a session's transcript when it cannot authenticate, as a synthetic
+// assistant entry with isApiErrorMessage set. The three observed on 2026-09-23:
+//   "Login expired · Please run /login"                          (error: authentication_failed)
+//   "Could not refresh your login because another Claude Code process is refreshing it (or exited
+//    mid-refresh) · Try again in a minute; …"                      (error: server_error)
+// Retrying either is pointless: the credential is the problem, not the session, and a fresh session
+// reads the same credential. Only API-error entries count — a real reply that QUOTES these strings
+// (a session working on this very bug, say) is a live session, not a dead one.
+//
+// "OAuth session expired and could not be refreshed" is deliberately NOT here: that is the loser of a
+// two-session refresh race (APL-74/78), and the winner leaves a good credential behind, so a retry works.
+const AUTH_FAILURE_RE = /Login expired|Please run \/login|Could not refresh your login/i;
+
+// Transcript text in → the failure's first line out, or null when it is not an auth failure.
+function classifyAuthFailure(transcript, sinceMs = 0) {
+  for (const line of String(transcript || '').split('\n')) {
+    if (!line.trim()) continue;
+    let e;
+    try { e = JSON.parse(line); } catch { continue; }
+    if (!e || e.type !== 'assistant' || e.isSidechain || !e.isApiErrorMessage) continue;
+    if ((Date.parse(e.timestamp) || 0) < sinceMs) continue;
+    const text = entryText(e);
+    if (AUTH_FAILURE_RE.test(text) || e.error === 'authentication_failed') {
+      return text.trim().split('\n')[0].split(' · ')[0].slice(0, 120) || String(e.error);
+    }
+  }
+  return null;
+}
+
+// A refusal repeats every poll until someone logs in; the desktop notification should not. One
+// episode is one reason. A poll that dispatches normally ends the episode (pass null).
+function shouldNotifyRefusal(reason, read = () => loadJson(CRED_NOTICE_PATH, {}),
+  write = (v) => writeFileSync(CRED_NOTICE_PATH, JSON.stringify(v, null, 2))) {
+  const prev = read() || {};
+  if ((prev.refused ?? null) === reason) return false;
+  try { write({ ...prev, refused: reason }); } catch { /* a notice is not worth failing a poll */ }
+  return reason !== null;
 }
 
 /**
@@ -991,7 +1121,9 @@ function reapGhosts(agents, stop = defaultStop) {
 }
 
 // A desktop notification in addition to the Linear comment — a question on the board is easy to miss.
+// CYCLER_NO_NOTIFY is for the test suite, which drives real polls on a real Mac.
 function notifyDesktop(title, body) {
+  if (process.env.CYCLER_NO_NOTIFY) return;
   try {
     execFileSync('/usr/bin/osascript', ['-e', `display notification ${JSON.stringify(body.slice(0, 200))} with title ${JSON.stringify(title)}`],
       { stdio: 'ignore', timeout: 5_000 });
@@ -1240,14 +1372,30 @@ async function poll() {
 
   // Before dispatching anything new: settle the fate of what was dispatched last time. This can
   // un-process an issue, which is what makes a dead dispatch retry below in the same poll.
-  await checkLiveness();
+  const liveness = await checkLiveness();
 
   const processed = new Set(loadJson(STATE_PATH, []));
   let changed = false;
 
-  const expiresAt = readClaudeExpiry();
-  const credBudget = dispatchBudget(expiresAt);
-  if (credBudget !== Infinity && shouldAnnounceExpiry(expiresAt)) {
+  const cred = readClaudeCredential();
+  const expiresAt = cred ? cred.expiresAt : null;
+  const hold = loadJson(AUTH_HOLD_PATH, null);
+  const pre = credentialPreflight(cred, Date.now(), REFRESH_SKEW_MS, hold);
+  if (hold && !pre.refuse) {
+    // The credential changed since a session died of it: someone logged in, or a refresh landed.
+    try { unlinkSync(AUTH_HOLD_PATH); } catch { /* already gone */ }
+    log(`claude credential changed since ${hold.identifier || 'a session'} died logged out — dispatching again`);
+  }
+  // A refusal dispatches nothing and marks nothing: the loop below never runs, so no issue is added
+  // to processed.json and no attempt is spent. It says so on the poll's outcome line, every poll,
+  // and on the desktop once per episode.
+  if (pre.refuse) {
+    if (shouldNotifyRefusal(pre.refuse)) notifyDesktop('cycler: Claude is logged out', `${pre.refuse}. Run /login.`);
+  } else {
+    shouldNotifyRefusal(null);
+  }
+  const credBudget = pre.budget;
+  if (credBudget === 1 && shouldAnnounceExpiry(expiresAt)) {
     // Not "you are logged out". The access token is minutes from expiry and the CLI refreshes it
     // by itself on the next session that goes out; the refresh token is untouched and `claude`
     // still reports a logged-in account. Dispatching one issue is how the refresh is serialised,
@@ -1404,17 +1552,30 @@ async function poll() {
   // The credential state is logged every poll on purpose: whether THIS process can read the
   // keychain is a property of how it was started (launchd, not a shell), so the only honest place
   // to find out is the launchd log itself.
-  const cred = expiresAt === null
+  const credText = expiresAt === null
     ? 'credential unreadable'
     : `credential expires ${new Date(expiresAt).toISOString()}`;
-  log(`poll ok: ${issues.nodes.length} delegated, ${processed.size} processed total, ${cred}`);
+  const tail = `${issues.nodes.length} delegated, ${processed.size} processed total, ${credText}`;
+  const problems = pollProblems(pre, liveness);
+  // `poll ok` is the line a human greps for, so it is printed only when nothing went wrong.
+  // 2026-09-23: six sessions died on "Login expired" and every poll in that window said `poll ok`.
+  log(problems.length ? `poll degraded: ${problems.join("; ")} | ${tail}` : `poll ok: ${tail}`);
+}
+
+// What makes a poll degraded, one short clause each, so the outcome line stays one line.
+function pollProblems(pre, liveness = { dead: [], authDead: [] }) {
+  const out = [];
+  if (pre && pre.refuse) out.push(`not dispatching, ${pre.refuse} — run /login`);
+  if (liveness.authDead.length) out.push(`${liveness.authDead.map((d) => d.identifier).join(', ')} died logged out`);
+  if (liveness.dead.length) out.push(`dead dispatch ${liveness.dead.map((d) => d.identifier + (d.giveUp ? ' (gave up)' : '')).join(', ')}`);
+  return out;
 }
 
 // Exported so the tests can exercise routing and the dispatch template without starting a poll —
 // a dispatch command that silently renders wrong is the failure this whole file is careful about,
 // and it is only checkable if it can be called.
 export { localTime, workflowFor, buildDispatchArgv, splitCommand, DEFAULT_DISPATCH, dispatchBudget, readClaudeExpiry,
-  shouldAnnounceExpiry,
+  shouldAnnounceExpiry, readClaudeCredential, credentialPreflight, classifyAuthFailure, shouldNotifyRefusal, pollProblems,
   countRunningSessions, concurrencySlots, busySessionIds, parseLimitReset, cooldownRemaining,
   agentState, isWorking, findSessionByKey, liveSessionFor, parkForResume, resumeAfterLimit, resumePrompt, sendPromptArgv, configuredFlags, applyConfiguredFlags, remoteControlUrl, livenessVerdict, agentFor, isBlocked,
   classifyTranscript, reviewRunning, sessionLink, follow, findGhosts, reapGhosts,

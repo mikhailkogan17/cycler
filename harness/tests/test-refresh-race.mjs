@@ -36,13 +36,12 @@ t('a credential expiring INSIDE the skew is already treated as stale', () => {
   assert.strictEqual(dispatchBudget(NOW + SKEW + 1, NOW, SKEW), Infinity);
 });
 
-t('an unreadable credential restricts NOTHING, rather than stalling the poller', () => {
-  // Fail open. This process runs under launchd, and whether it can read the keychain is a property
-  // of how it was started. Turning "cannot read" into "dispatch nothing" would convert a
-  // permissions question into a silent stall, which is the failure mode this poller is built to
-  // avoid everywhere else.
+t('an unreadable access expiry yields NO budget — "cannot tell" is not safe', () => {
+  // This used to fail open. On 2026-09-23 the keychain read back expiresAt 0 after a session exited
+  // mid-refresh, the account was logged out, and failing open sent six sessions to die on
+  // "Login expired". See credentialPreflight for the whole rule; this is the access-token half.
   for (const v of [null, undefined, NaN, 'soon']) {
-    assert.strictEqual(dispatchBudget(v, NOW, SKEW), Infinity, `budget was limited for ${String(v)}`);
+    assert.strictEqual(dispatchBudget(v, NOW, SKEW), 0, `budget was not zero for ${String(v)}`);
   }
 });
 
@@ -67,10 +66,8 @@ t('every unusable credential shape reads as unknown rather than throwing', () =>
   }
 });
 
-t('a stale credential plus an unusable read still cannot stall the poll', () => {
-  // The two halves compose: unknown expiry -> no budget limit. Asserted together because each
-  // half passing separately is what let the argument order bug survive in an earlier draft.
-  assert.strictEqual(dispatchBudget(readClaudeExpiry(() => 'garbage'), NOW, SKEW), Infinity);
+t('an unusable credential read composes into no budget', () => {
+  assert.strictEqual(dispatchBudget(readClaudeExpiry(() => 'garbage'), NOW, SKEW), 0);
 });
 
 t('poll() actually spends the budget — the pure function is wired in', () => {
@@ -81,7 +78,9 @@ t('poll() actually spends the budget — the pure function is wired in', () => {
   const src = readFileSync(POLLER.replace(/^file:\/\//, ''), 'utf8');
   const loop = /const processed = new Set\(loadJson\(STATE_PATH[\s\S]*?\n  }\n\n  if \(changed\)/.exec(src);
   assert.ok(loop, 'the dispatch loop was not found — this test is asserting nothing');
-  assert.match(loop[0], /=\s*dispatchBudget\(/, 'poll() never asks for a budget');
+  assert.match(src, /const pre = credentialPreflight\(/, 'poll() never runs the pre-flight');
+  assert.match(src, /const credBudget = pre\.budget;/, 'poll() ignores what the pre-flight decided');
+  assert.match(loop[0], /Math\.min\(credBudget,/, 'the dispatch loop never consults the credential budget');
   assert.match(loop[0], /if\s*\(budget\s*<=\s*0\)\s*break/, 'poll() never stops when the budget runs out');
   assert.match(loop[0], /budget\s*-=\s*1/, 'poll() never spends the budget, so the limit can never be reached');
 });
@@ -117,7 +116,7 @@ t('the notice no longer calls the credential stale or asks for a login', () => {
 
 t('the notice is gated on the once-per-episode check', () => {
   const src = readFileSync(POLLER.replace(/^file:\/\//, ''), 'utf8');
-  assert.match(src, /credBudget !== Infinity && shouldAnnounceExpiry\(expiresAt\)/,
+  assert.match(src, /credBudget === 1 && shouldAnnounceExpiry\(expiresAt\)/,
     'poll() logs the notice without consulting shouldAnnounceExpiry');
 });
 

@@ -40,6 +40,11 @@ function poll({ script = {}, cfg = null, token = {}, processed = null, env = {} 
   const credLines = 'linear:\n  client_id: cid\n  client_secret: csec\n';
   const repoLine = `${credLines}repo:\n  path: ${repo}\n`;
   writeFileSync(cfgPath, cfg ? cfg(repoLine) : repoLine);
+  // A fresh Claude credential of its own: the pre-flight refuses on an unreadable or logged-out one,
+  // and these cases must not pass or fail on whatever this machine's keychain holds today.
+  const credFile = join(home, 'credentials.json');
+  writeFileSync(credFile, JSON.stringify({ claudeAiOauth: {
+    expiresAt: Date.now() + 8 * 3600_000, refreshTokenExpiresAt: Date.now() + 30 * 86400_000, refreshToken: 'r' } }));
 
   const r = spawnSync(process.execPath, ['--import', DOUBLE, POLLER], {
     encoding: 'utf8',
@@ -49,6 +54,7 @@ function poll({ script = {}, cfg = null, token = {}, processed = null, env = {} 
       CLAUDE_BIN: process.execPath,   // argv[0] 'claude' is rewritten to this
       DOUBLE_SCRIPT: scriptPath, DOUBLE_JOURNAL: journal,
       CLAUDE_PROJECT_DIR: home,
+      CYCLER_CREDENTIALS_FILE: credFile, CYCLER_NO_NOTIFY: '1',
     },
   });
   const entries = readFileSync(journal, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
