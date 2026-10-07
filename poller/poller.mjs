@@ -1093,30 +1093,166 @@ function reviewRunning({ agents = readAgents(defaultAgentsRead), readTranscript 
 //   - a second live `[KEY]` session for an issue whose watched session still exists
 // Stopped, never removed: `claude stop` keeps the conversation, so a wrong call costs nothing.
 const GHOST_NAME_PREFIX = "The account's Claude usage window";
+
+// A watched record OWNS its key only while its session is live and not `blocked`. `blocked` means
+// "waiting on a permission prompt nobody answers" — it holds the key but never ends on its own
+// (APL-123, 2026-10-06) — and a gone/done session is not running at all. Before this, the owner map
+// only checked that the session id still appeared in the registry AT ALL, so a blocked (or already
+// finished) watched session kept "owning" its key forever and every live re-dispatch for the same
+// key was ghosted as a "duplicate" of a session that could never finish — killing every re-dispatch
+// in a loop. `idle` is deliberately NOT disqualified here: it is the "waiting on a human reply" state
+// that resumes the moment someone answers (see reviewRunning()), unlike a local permission prompt.
 function findGhosts(agents, watched) {
   if (!Array.isArray(agents)) return [];
   const live = (a) => a && !AGENT_GONE_STATES.has(agentState(a)) && agentState(a) !== 'done';
+  // Eligible to stand in as the REPLACEMENT owner: live and not itself blocked — a blocked session
+  // cannot replace another blocked session.
+  const eligible = (a) => live(a) && agentState(a) !== 'blocked';
+  const byId = new Map(agents.filter(Boolean).map((a) => [String(a.id || ''), a]));
   const ids = new Set(agents.map((a) => a && String(a.id || '')));
-  const owner = new Map(watched.filter((r) => ids.has(r.session)).map((r) => [r.identifier, r.session]));
+  const keyOf = (a) => (String((a && a.name) || '').match(/^\[([A-Z][A-Z0-9]*-\d+)\]/) || [])[1];
+
+  // Split the watched records into real owners and disqualified ("disowned") ones, grouped by key
+  // rather than reduced to one each — checkLiveness() can already have added a fresh record for a
+  // live replacement in the SAME poll, before the stale disqualified record is cleaned up, so both
+  // can be watched for the same key at once. A record whose session cannot be found in the registry
+  // at all is left out of both — that is "can't verify either way", and the existing behaviour
+  // (leave it alone) stays exactly as it was.
+  const owner = new Map();
+  const disownedBy = new Map();
+  for (const r of watched) {
+    if (!ids.has(r.session)) continue;
+    const agent = byId.get(r.session);
+    if (live(agent) && agentState(agent) !== 'blocked') {
+      owner.set(r.identifier, r.session); // at most one real owner is ever expected
+    } else {
+      if (!disownedBy.has(r.identifier)) disownedBy.set(r.identifier, []);
+      disownedBy.get(r.identifier).push(r);
+    }
+  }
+
+  // The newest ELIGIBLE live `[KEY]` session, per key — the replacement owner when the watched one
+  // is disqualified, matching agentFor()'s newest-wins rule. A key with no eligible competitor has
+  // no entry: a disqualified owner with nothing live to replace it is left running, untouched.
+  const newestByKey = new Map();
+  for (const a of agents.filter(eligible)) {
+    const key = keyOf(a);
+    if (!key) continue;
+    const prev = newestByKey.get(key);
+    if (!prev || (Number(a.startedAt) || 0) > (Number(prev.startedAt) || 0)) newestByKey.set(key, a);
+  }
+
+  // A replacement must have started AFTER the disowned session it would replace — otherwise an
+  // older `idle` session (one that has sat in the registry for a while) can wrongly bump a just
+  // -dispatched `blocked` session sharing its key, because `idle` is eligible and "newest" only
+  // compares eligible candidates against each other, never against the session being disowned
+  // (PR #20 review finding #1). No qualifying replacement means the disowned session is left alone,
+  // same as having no eligible competitor at all.
+  const replacementFor = new Map();
+  for (const [key, candidate] of newestByKey) {
+    const disowned = disownedBy.get(key);
+    if (!disowned) continue;
+    const disownedStartedAt = disowned.reduce((max, r) => {
+      const agent = byId.get(r.session);
+      return Math.max(max, agent ? Number(agent.startedAt) || 0 : 0);
+    }, 0);
+    if ((Number(candidate.startedAt) || 0) > disownedStartedAt) replacementFor.set(key, candidate);
+  }
+
   const ghosts = [];
+  const replaced = new Set();
   for (const a of agents.filter(live)) {
     const name = String(a.name || '');
     const id = String(a.id || '');
-    if (name.startsWith(GHOST_NAME_PREFIX)) { ghosts.push({ id, name, why: 'copy forked from a resume prompt' }); continue; }
-    const key = (name.match(/^\[([A-Z][A-Z0-9]*-\d+)\]/) || [])[1];
-    if (key && owner.has(key) && owner.get(key) !== id) {
-      ghosts.push({ id, name, why: `duplicate of watched ${key} session ${owner.get(key)}` });
+    if (name.startsWith(GHOST_NAME_PREFIX)) { ghosts.push({ id, name, startedAt: a.startedAt, why: 'copy forked from a resume prompt' }); continue; }
+    const key = keyOf(a);
+    if (!key) continue;
+    const disowned = disownedBy.get(key); // disqualified watched record(s) for this key, if any
+    if (owner.has(key)) {
+      const ownerId = owner.get(key);
+      if (ownerId !== id) {
+        // Still ghost it even though some OTHER watched record already owns the key — if this id
+        // is itself one of the disqualified watched sessions, mark it for the running.json cleanup
+        // below rather than leaving its stale record sitting next to the real owner's.
+        const stale = disowned && disowned.some((r) => r.session === id);
+        ghosts.push({
+          id, name, identifier: key, startedAt: a.startedAt,
+          ...(stale ? { replacement: ownerId } : {}),
+          why: stale ? `blocked — replaced by live ${key} session ${ownerId}` : `duplicate of watched ${key} session ${ownerId}`,
+        });
+      }
+      continue;
+    }
+    const newOwner = disowned && replacementFor.get(key);
+    if (!disowned || !newOwner) continue; // disqualified owner, nothing QUALIFYING to replace it — leave it
+    const newOwnerId = String(newOwner.id || '');
+    const asOwner = disowned.find((r) => r.session === id);
+    if (asOwner) {
+      if (!replaced.has(key)) {
+        replaced.add(key);
+        ghosts.push({ id, name, identifier: key, startedAt: a.startedAt, replacement: newOwnerId, why: `blocked — replaced by live ${key} session ${newOwnerId}` });
+      }
+      continue;
+    }
+    if (id !== newOwnerId) {
+      ghosts.push({ id, name, identifier: key, startedAt: a.startedAt, why: `duplicate of watched ${key} session ${newOwnerId}` });
     }
   }
   return ghosts;
 }
 
+// Stops every ghost findGhosts() names, then cleans up after each one it actually stopped:
+//   - a "blocked — replaced by" ghost means the watched record itself is now stale, so
+//     running.json is re-pointed at the replacement session (or, if checkLiveness already added
+//     its OWN record for the replacement this same poll, the stale record is dropped instead of
+//     doubling up — exactly one record per key either way).
+//   - ANY ghost's pending.json record (if it still has one — matched by session id, or by
+//     identifier when the record carries no session id yet) is dropped, so a session this poller
+//     stopped itself can never surface on a later poll as a `dead dispatch` and retry into the
+//     same ghosting loop that produced it (the APL-123 sequence). The identifier match is narrowed
+//     to ghosts that started at or after the pending record's dispatch time — a session-less
+//     pending record can only BE a given ghost if that ghost didn't start before it was dispatched;
+//     otherwise the ghost is an older, unrelated session and the record belongs to a separate,
+//     later dispatch that must not be eaten (PR #20 review finding #2).
 function reapGhosts(agents, stop = defaultStop) {
   const reaped = [];
-  for (const g of findGhosts(agents, loadJson(RUNNING_PATH, []))) {
-    try { stop(g.id); log(`stopped ghost session ${g.id} (${g.why}): ${g.name.slice(0, 80)}`); reaped.push(g); }
-    catch (err) { logErr(`could not stop ghost session ${g.id}: ${err.message}`); }
+  let running = loadJson(RUNNING_PATH, []);
+  let runningChanged = false;
+  let pending = null;
+  const matchesGhost = (p, g) => {
+    if (p.session) return p.session === g.id;
+    if (!g.identifier || p.identifier !== g.identifier) return false;
+    const ghostStarted = Number(g.startedAt);
+    const pendingAt = Number(p.at);
+    if (!Number.isFinite(ghostStarted) || !Number.isFinite(pendingAt)) return false; // can't verify — leave it
+    return ghostStarted >= pendingAt;
+  };
+  for (const g of findGhosts(agents, running)) {
+    try {
+      stop(g.id);
+      log(`stopped ghost session ${g.id} (${g.why}): ${g.name.slice(0, 80)}`);
+      reaped.push(g);
+    } catch (err) {
+      logErr(`could not stop ghost session ${g.id}: ${err.message}`);
+      continue;
+    }
+    if (pending === null) pending = loadJson(PENDING_PATH, []);
+    pending = pending.filter((p) => !matchesGhost(p, g));
+    if (g.replacement) {
+      if (running.some((r) => r.session === g.replacement)) {
+        running = running.filter((r) => r.session !== g.id);
+      } else {
+        running = running.map((r) => {
+          if (r.session !== g.id) return r;
+          const { notified, ...rest } = r;
+          return { ...rest, session: g.replacement, at: Date.now() };
+        });
+      }
+      runningChanged = true;
+    }
   }
+  if (runningChanged) writeFileSync(RUNNING_PATH, JSON.stringify(running, null, 2));
+  if (pending !== null) writeFileSync(PENDING_PATH, JSON.stringify(pending, null, 2));
   return reaped;
 }
 
@@ -1578,7 +1714,7 @@ export { localTime, workflowFor, buildDispatchArgv, splitCommand, DEFAULT_DISPAT
   shouldAnnounceExpiry, readClaudeCredential, credentialPreflight, classifyAuthFailure, shouldNotifyRefusal, pollProblems,
   countRunningSessions, concurrencySlots, busySessionIds, parseLimitReset, cooldownRemaining,
   agentState, isWorking, findSessionByKey, liveSessionFor, parkForResume, resumeAfterLimit, resumePrompt, sendPromptArgv, configuredFlags, applyConfiguredFlags, remoteControlUrl, livenessVerdict, agentFor, isBlocked,
-  classifyTranscript, reviewRunning, sessionLink, follow, findGhosts, reapGhosts,
+  classifyTranscript, reviewRunning, sessionLink, follow, findGhosts, reapGhosts, checkLiveness,
   blockerKeys };
 
 // Run only when executed directly, not when imported.
