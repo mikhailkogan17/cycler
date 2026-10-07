@@ -88,11 +88,24 @@ t('a pending record for the stopped ghost is dropped, so checkLiveness never cal
 
 t('pending.json record matched by identifier when it carries no session id yet', () => {
   // dispatch() can resolve no session id at all (APL-76); the pending record then has none either.
+  // D started (500) after the record was dispatched (100), so D could plausibly BE that dispatch.
   const agents = [...agentsAB, { id: 'D', name: '[CYC-10] fix the thing', state: 'working', startedAt: 500 }];
   setWatched([REC_A]);
-  setPending([{ issueId: 'i1', identifier: 'CYC-10', workflow: '/cycler:workflow-feature', session: null, at: Date.now(), attempts: 1 }]);
+  setPending([{ issueId: 'i1', identifier: 'CYC-10', workflow: '/cycler:workflow-feature', session: null, at: 100, attempts: 1 }]);
   reapGhosts(agents, () => {});
   assert.deepStrictEqual(pending(), [], 'a session-less pending record for the same identifier as a stopped ghost is dropped too');
+});
+
+t('an identifier-matched pending record is NOT dropped by a ghost that started before it was dispatched', () => {
+  // PR #20 review finding #2: a duplicate ghost reaped alongside a fresh, still-session-less
+  // dispatch must not eat the fresh dispatch's pending record just because they share an
+  // identifier. The ghost here (D, startedAt 500) predates the pending record's dispatch (at 900),
+  // so it cannot be that dispatch — the record must survive for the real session to claim later.
+  const agents = [...agentsAB, { id: 'D', name: '[CYC-10] fix the thing', state: 'working', startedAt: 500 }];
+  setWatched([REC_A]);
+  setPending([{ issueId: 'i1', identifier: 'CYC-10', workflow: '/cycler:workflow-feature', session: null, at: 900, attempts: 1 }]);
+  reapGhosts(agents, () => {});
+  assert.strictEqual(pending().length, 1, "the fresh dispatch's pending record must survive");
 });
 
 t('a blocked watched session with NO live competitor is left alone entirely', () => {
@@ -104,6 +117,25 @@ t('a blocked watched session with NO live competitor is left alone entirely', ()
   reapGhosts(agentsAOnly, (id) => stopped.push(id));
   assert.deepStrictEqual(stopped, []);
   assert.deepStrictEqual(watched(), [REC_A], "A's record is untouched — same session, same everything");
+});
+
+t('a replacement must be NEWER than the disowned session: an older idle session must not replace a newer blocked dispatch', () => {
+  // PR #20 review finding #1. OLD is idle (eligible) but started well before NEW's blocked dispatch
+  // — it must not be promoted to "replacement owner" just because it is the only eligible live
+  // session for the key. NEW stays the owner and nobody is ghosted.
+  const recNew = { session: 'NEW', issueId: 'i1', identifier: 'CYC-10', workflow: '/cycler:workflow-feature', attempts: 1, at: T0 };
+  const agents = [
+    { id: 'OLD', name: '[CYC-10] x', state: 'idle', startedAt: 1 },
+    { id: 'NEW', name: '[CYC-10] x', state: 'blocked', startedAt: 9 },
+  ];
+  assert.deepStrictEqual(findGhosts(agents, [recNew]), [],
+    'OLD must not be promoted to replace a NEW dispatch that started after it — leave both alone');
+  setWatched([recNew]);
+  setPending([]);
+  const stopped = [];
+  reapGhosts(agents, (id) => stopped.push(id));
+  assert.deepStrictEqual(stopped, []);
+  assert.deepStrictEqual(watched(), [recNew], "NEW's record is untouched");
 });
 
 t('idle (not blocked) still owns its key — unchanged from before this fix', () => {

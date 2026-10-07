@@ -1142,12 +1142,29 @@ function findGhosts(agents, watched) {
     if (!prev || (Number(a.startedAt) || 0) > (Number(prev.startedAt) || 0)) newestByKey.set(key, a);
   }
 
+  // A replacement must have started AFTER the disowned session it would replace — otherwise an
+  // older `idle` session (one that has sat in the registry for a while) can wrongly bump a just
+  // -dispatched `blocked` session sharing its key, because `idle` is eligible and "newest" only
+  // compares eligible candidates against each other, never against the session being disowned
+  // (PR #20 review finding #1). No qualifying replacement means the disowned session is left alone,
+  // same as having no eligible competitor at all.
+  const replacementFor = new Map();
+  for (const [key, candidate] of newestByKey) {
+    const disowned = disownedBy.get(key);
+    if (!disowned) continue;
+    const disownedStartedAt = disowned.reduce((max, r) => {
+      const agent = byId.get(r.session);
+      return Math.max(max, agent ? Number(agent.startedAt) || 0 : 0);
+    }, 0);
+    if ((Number(candidate.startedAt) || 0) > disownedStartedAt) replacementFor.set(key, candidate);
+  }
+
   const ghosts = [];
   const replaced = new Set();
   for (const a of agents.filter(live)) {
     const name = String(a.name || '');
     const id = String(a.id || '');
-    if (name.startsWith(GHOST_NAME_PREFIX)) { ghosts.push({ id, name, why: 'copy forked from a resume prompt' }); continue; }
+    if (name.startsWith(GHOST_NAME_PREFIX)) { ghosts.push({ id, name, startedAt: a.startedAt, why: 'copy forked from a resume prompt' }); continue; }
     const key = keyOf(a);
     if (!key) continue;
     const disowned = disownedBy.get(key); // disqualified watched record(s) for this key, if any
@@ -1159,26 +1176,26 @@ function findGhosts(agents, watched) {
         // below rather than leaving its stale record sitting next to the real owner's.
         const stale = disowned && disowned.some((r) => r.session === id);
         ghosts.push({
-          id, name, identifier: key,
+          id, name, identifier: key, startedAt: a.startedAt,
           ...(stale ? { replacement: ownerId } : {}),
           why: stale ? `blocked — replaced by live ${key} session ${ownerId}` : `duplicate of watched ${key} session ${ownerId}`,
         });
       }
       continue;
     }
-    const newOwner = disowned && newestByKey.get(key);
-    if (!disowned || !newOwner) continue; // disqualified owner, nothing live to replace it — leave it
+    const newOwner = disowned && replacementFor.get(key);
+    if (!disowned || !newOwner) continue; // disqualified owner, nothing QUALIFYING to replace it — leave it
     const newOwnerId = String(newOwner.id || '');
     const asOwner = disowned.find((r) => r.session === id);
     if (asOwner) {
       if (!replaced.has(key)) {
         replaced.add(key);
-        ghosts.push({ id, name, identifier: key, replacement: newOwnerId, why: `blocked — replaced by live ${key} session ${newOwnerId}` });
+        ghosts.push({ id, name, identifier: key, startedAt: a.startedAt, replacement: newOwnerId, why: `blocked — replaced by live ${key} session ${newOwnerId}` });
       }
       continue;
     }
     if (id !== newOwnerId) {
-      ghosts.push({ id, name, identifier: key, why: `duplicate of watched ${key} session ${newOwnerId}` });
+      ghosts.push({ id, name, identifier: key, startedAt: a.startedAt, why: `duplicate of watched ${key} session ${newOwnerId}` });
     }
   }
   return ghosts;
@@ -1192,12 +1209,24 @@ function findGhosts(agents, watched) {
 //   - ANY ghost's pending.json record (if it still has one — matched by session id, or by
 //     identifier when the record carries no session id yet) is dropped, so a session this poller
 //     stopped itself can never surface on a later poll as a `dead dispatch` and retry into the
-//     same ghosting loop that produced it (the APL-123 sequence).
+//     same ghosting loop that produced it (the APL-123 sequence). The identifier match is narrowed
+//     to ghosts that started at or after the pending record's dispatch time — a session-less
+//     pending record can only BE a given ghost if that ghost didn't start before it was dispatched;
+//     otherwise the ghost is an older, unrelated session and the record belongs to a separate,
+//     later dispatch that must not be eaten (PR #20 review finding #2).
 function reapGhosts(agents, stop = defaultStop) {
   const reaped = [];
   let running = loadJson(RUNNING_PATH, []);
   let runningChanged = false;
   let pending = null;
+  const matchesGhost = (p, g) => {
+    if (p.session) return p.session === g.id;
+    if (!g.identifier || p.identifier !== g.identifier) return false;
+    const ghostStarted = Number(g.startedAt);
+    const pendingAt = Number(p.at);
+    if (!Number.isFinite(ghostStarted) || !Number.isFinite(pendingAt)) return false; // can't verify — leave it
+    return ghostStarted >= pendingAt;
+  };
   for (const g of findGhosts(agents, running)) {
     try {
       stop(g.id);
@@ -1208,7 +1237,7 @@ function reapGhosts(agents, stop = defaultStop) {
       continue;
     }
     if (pending === null) pending = loadJson(PENDING_PATH, []);
-    pending = pending.filter((p) => (p.session ? p.session !== g.id : !(g.identifier && p.identifier === g.identifier)));
+    pending = pending.filter((p) => !matchesGhost(p, g));
     if (g.replacement) {
       if (running.some((r) => r.session === g.replacement)) {
         running = running.filter((r) => r.session !== g.id);
