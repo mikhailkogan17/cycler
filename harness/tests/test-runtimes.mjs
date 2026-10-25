@@ -32,6 +32,13 @@ try {
   for (const runtime of ['claude', 'codex', 'dsh']) {
     assert.deepEqual(await runAgent({ runtime, config: { runtimes: { [runtime]: { bin: fake } } }, cwd: temp, prompt: evil, schema }), { ok: true });
   }
+  const calls = [];
+  const session = 'session-11111111-1111-4111-8111-111111111111';
+  const output = answer => `${JSON.stringify({ type: 'session', sessionId: session })}\n${JSON.stringify({ type: 'final', text: answer })}\n`;
+  assert.deepEqual(await runAgent({ runtime: 'dsh', cwd: temp, prompt: 'review', schema,
+    run: async argv => { calls.push(argv); return output(calls.length === 1 ? "I'll review the files." : '{"ok":true}'); } }), { ok: true });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1].slice(calls[1].indexOf('--session-id'), calls[1].indexOf('--session-id') + 2), ['--session-id', session]);
   await assert.rejects(execute([process.execPath, '-e', 'process.exit(2)']), /failed/);
   await assert.rejects(runAgent({ runtime: 'dsh', config: { runtimes: { dsh: { bin: fake } } }, cwd: temp, prompt: 'x', schema: { type: 'object', required: ['missing'] } }), /missing/);
   assert.throws(() => validate({ findings: [{}] }, { type: 'object', properties: { findings: { type: 'array', items: { type: 'object', required: ['line'] } } } }), /line/);

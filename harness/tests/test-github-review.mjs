@@ -25,6 +25,14 @@ current = next;
 await assert.rejects(publishReview({ api, pr, findings: [finding] }), /head changed/);
 current = head;
 await assert.rejects(review({ cwd: '/tmp', pr: pr.url, agent: async () => null, api, snapshot: false }), /expected object/);
+let finishedReviewers = 0;
+await assert.rejects(review({ cwd: '/tmp', pr: pr.url, agent: async request => {
+  if (request.prompt.includes('Lens: bugs.')) throw new Error('reviewer failed');
+  await new Promise(resolve => setTimeout(resolve, 20));
+  finishedReviewers++;
+  return { findings: [] };
+}, api, snapshot: false }), /reviewer failed/);
+assert.equal(finishedReviewers, 2, 'all concurrent reviewers finish before snapshot cleanup');
 await assert.rejects(review({ cwd: '/tmp', pr: pr.url, agent: async () => ({ findings: [{ ...finding, line: 99 }] }), api, snapshot: false }), /diff/);
 await assert.rejects(publishReview({ api: { ...api, list: e => e.endsWith('/files') ? files : [], api: () => { throw new Error('GitHub failed'); } }, pr, findings: [finding] }), /GitHub failed/);
 comments = [{ id: 20, body: 'root' }]; current = next;

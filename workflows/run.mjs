@@ -36,7 +36,7 @@ export async function runWorkflow(args, { agent: invoke = runAgent, reviewer = r
         const schema = { type: 'object', required: ['replies'], properties: { replies: { type: 'array', items: {
           type: 'object', required: ['id', 'body'], properties: { id: { type: 'integer' }, body: { type: 'string' } }
         } } } };
-        const drafted = await invoke({ ...route, config, cwd: opts.cwd || cwd, schema,
+        const drafted = await invoke({ ...route, config, cwd: opts.cwd || cwd, schema, readOnly: true,
           prompt: `You are the implementer replying to these GitHub threads: ${JSON.stringify(threads)}. Inspect the actual code and commit ${commit}. Explain the verified fix and tests, or an evidence-based disagreement/deferral. Do not publish; return one reply per root thread.`, label: opts.label });
         if (!drafted?.replies || drafted.replies.length !== threads.length || new Set(drafted.replies.map(r => r.id)).size !== threads.length
           || threads.some(t => !drafted.replies.some(r => r.id === t.id))) throw new Error('Implementer did not answer every thread');

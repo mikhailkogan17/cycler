@@ -105,7 +105,7 @@ export async function review({ cwd, pr: reference, config = {}, runtime, contrac
     if (!files.length || files.length >= 3000 || files.some(f => !f.patch && f.changes > 0)) throw new Error('GitHub diff is empty or truncated/binary; cannot report a complete review');
     const spec = contract ? readFileSync(resolve(cwd, contract), 'utf8') : `PR title: ${pr.title}\nPR description:\n${pr.body || '(none)'}`;
     const baseRuntime = runtimeName(config, runtime);
-    const results = await Promise.all(LENSES.map(async lens => {
+    const settled = await Promise.allSettled(LENSES.map(async lens => {
       const route = stageRoute(config, `review:${lens}`, baseRuntime);
       const result = await agent({ ...route, config, cwd: dir, readOnly: true, schema: FINDINGS,
         prompt: `Independently review PR ${pr.url} at EXACT commit ${pr.headRefOid}. Lens: ${lens}.\n`
@@ -118,6 +118,10 @@ export async function review({ cwd, pr: reference, config = {}, runtime, contrac
       assertLocations(result.findings, files);
       return result.findings.map(f => ({ ...f, lens, runtime: route.runtime }));
     }));
+    // Keep the shared snapshot alive until every reviewer exits, even if one fails.
+    const failed = settled.find(result => result.status === 'rejected');
+    if (failed) throw failed.reason;
+    const results = settled.map(result => result.value);
     const raw = results.flat();
     // No dropped blocking claims: bounded input (3 x 10); verify every blocker before publication.
     const confirmed = [];
