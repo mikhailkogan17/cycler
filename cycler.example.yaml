@@ -21,7 +21,7 @@ linear:
 repo:
   path: ~/your-repo        # where sessions are started
   base: main               # PR base branch
-  branch_prefix: claude/   # branches are <branch_prefix><ISSUE-KEY>
+  branch_prefix: cycler/   # branches are <branch_prefix><ISSUE-KEY>
 
 workflows:
   # `default` is the workflow for an issue with no matching label. Every other key IS a Linear label,
@@ -39,6 +39,7 @@ workflows:
   research: /cycler:workflow-research  # a decision, not a diff — nothing to gate or audit
 
 dispatch:
+  runtime: claude # claude | codex | dsh; existing installs keep Claude by default
   # The whole command, as a template: {workflow} {issue} {title} {url} {session}.
   # Do NOT add --print: it conflicts with --background and claude exits 1, which looks exactly like
   # "the agent never saw the issue".
@@ -53,10 +54,10 @@ dispatch:
   # not an escalation — it is a footgun worth not building into your own template.
   # The same flags are applied when cycler RESUMES a session (usage-limit reset, review comments):
   # the session keeps its id and is restarted with these flags, never forked with --resume.
-  command: >
-    claude --background --name "{session}" --remote-control "{session}"
-    --remote-control-session-name-prefix linear --permission-mode auto
-    --append-system-prompt "Started by cycler for {issue}" "{workflow} {issue}"
+  # command: >
+  # claude --background --name "{session}" --remote-control "{session}"
+  # --remote-control-session-name-prefix linear --permission-mode auto
+  # --append-system-prompt "Started by cycler for {issue}" "{workflow} {issue}"
 
   # launchd hands a job PATH=/usr/bin:/bin:/usr/sbin:/sbin. The dispatched session inherits it, so
   # without this it cannot find node, gh, claude or lin and stalls asking a human. An interactive
@@ -85,3 +86,34 @@ dispatch:
 #   escape_hatch.max_files / escape_hatch.paths    past these, run the full workflow, not inline
 #   launchd.label         the polling job's label and plist filename
 # All of them are documented in full, with defaults, in docs/specs/002-config.md.
+
+# Headless runtime settings. Authentication belongs to each CLI, never this file.
+runtimes:
+  claude:
+    bin: claude
+    args: [--permission-mode, auto]
+  codex:
+    bin: codex
+    sandbox: workspace-write
+    args: []
+  dsh:
+    bin: dsh
+    profile: headless
+    # patch: ~/.config/cycler/dsh.patch.yml
+    # model: reviewer  # a model_patches key, not an invented --model CLI flag
+    # model_patches:
+    #   reviewer: ~/.config/cycler/dsh-reviewer.patch.yml
+    args: []
+
+# Separate independent review; can use a different runtime/model from implementation.
+review:
+  runtime: codex
+  # model: <an installed/configured Codex model>
+  # Per-lens overrides (each value is a map):
+  # lenses:
+  #   bugs:
+  #     runtime: dsh
+  #     model: reviewer
+  #   test-gaps:
+  #     runtime: claude
+  #     model: haiku

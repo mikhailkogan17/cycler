@@ -3,6 +3,10 @@ description: Hand one Linear issue to the agent and dispatch it now, without wai
 argument-hint: <ISSUE-KEY>
 ---
 
+Resolve `CYCLER_ROOT` from the shared skill entry point or `CLAUDE_PLUGIN_ROOT`, then set
+`CLAUDE_PLUGIN_ROOT` to that same path for the legacy shell snippets below.
+
+
 Delegate `$1` to the Claude agent and dispatch it immediately.
 
 This is the same thing as assigning the issue to Claude on the board, done from here instead. The

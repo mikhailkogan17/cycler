@@ -2,6 +2,10 @@
 description: Unload and remove the launchd polling job.
 ---
 
+Resolve `CYCLER_ROOT` from the shared skill entry point or `CLAUDE_PLUGIN_ROOT`, then set
+`CLAUDE_PLUGIN_ROOT` to that same path for the legacy shell snippets below.
+
+
 ```bash
 LABEL="$(node "${CLAUDE_PLUGIN_ROOT}/harness/read-config.mjs" launchd.label dev.cycler.linear)"
 PLIST=~/Library/LaunchAgents/"$LABEL".plist

@@ -41,10 +41,13 @@ t('the shipped example parses into usable values', () => {
   const here = dirname(fileURLToPath(import.meta.url));
   process.env.CYCLER_CONFIG = join(here, '..', '..', 'cycler.example.yaml');
   const c = readConfig();
-  const cmd = c.dispatch?.command || '';
-  assert.ok(cmd.startsWith('claude '), `dispatch.command is not a command: ${JSON.stringify(cmd)}`);
-  assert.ok(cmd.includes('--background'), 'dispatch.command lost --background');
-  assert.ok(!cmd.includes('--print'), '--print conflicts with --background and exits 1');
+  assert.strictEqual(c.dispatch?.runtime, 'claude');
+  assert.strictEqual(c.dispatch?.command, undefined, 'the example must not pin a Claude command when changing runtimes');
+  for (const name of ['claude', 'codex', 'dsh']) {
+    assert.strictEqual(c.runtimes?.[name]?.bin, name);
+    assert.ok(Array.isArray(c.runtimes[name].args));
+  }
+  assert.strictEqual(c.review?.runtime, 'codex');
   assert.strictEqual(c.repo?.base, 'main');
   assert.ok(Array.isArray(c.dispatch?.path_prepend) && c.dispatch.path_prepend.length >= 2);
   // The credentials are in this file now, not a second config.json. If they stop parsing, the

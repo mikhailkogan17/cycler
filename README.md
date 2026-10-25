@@ -222,3 +222,19 @@ Spec → failing test → code → gate, in that order. [`CONTRIBUTING.md`](CONT
 ## License
 
 [`MIT`](LICENSE).
+
+
+## Codex, DeepSeek Harness and standalone review
+
+Select `dispatch.runtime: codex` or `dispatch.runtime: dsh` in the existing config. Configure the
+absolute CLI path under `runtimes.<runtime>.bin`. Claude remains the default for existing installs.
+Install the shared skill entry points with `node /path/to/cycler/harness/install-skills.mjs --repo /repo`.
+Codex and dsh discover `.agents/skills`; Codex invokes them as `$cycler-workflow-feature`,
+`$cycler-workflow-bug`, `$cycler-workflow-research`, or `$cycler-workflow-intake`.
+
+`/cycler:workflow-review` (Codex: `$cycler-workflow-review`) reviews any existing GitHub PR,
+independently of Linear and implementation. Set `review.runtime` or per-lens runtimes/models for
+cross-model review. It publishes inline GitHub comments; fix rounds reply in the original threads
+with the pushed commit and verification before re-reviewing. It never merges.
+
+See [runtime setup, DSH authentication and review configuration](docs/specs/005-runtimes.md).

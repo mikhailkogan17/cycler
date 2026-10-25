@@ -193,7 +193,7 @@ const unattended = args?.unattended === true
 // APL-37 req 1: an unattended run must never stop to ask. stopAtContract is a request for human sign-off,
 // so the two are contradictory — unattended wins, loudly.
 const stopAtContract = args?.stopAtContract === true && !unattended
-const fixMax = args?.fixMax || 2
+const fixMax = args?.fixMax ?? 2
 // APL-9: the pre-commit gate loop and the post-commit review loop get INDEPENDENT budgets. They used to
 // share one counter against fixMax, so a task that needed both gate rounds opened its PR and then hit
 // `fixLog.length >= fixMax` on the review loop's first iteration — a published, never-fixable PR plus a
@@ -237,7 +237,7 @@ const DEFAULT_MODELS = {
 
 function modelFor(stage) {
   const overrides = args?.models || {}
-  const picked = stage in overrides ? overrides[stage] : DEFAULT_MODELS[stage]
+  const picked = stage in overrides ? overrides[stage] : (args.runtime && args.runtime !== 'claude' ? undefined : DEFAULT_MODELS[stage])
   return picked ?? model
 }
 
@@ -543,7 +543,7 @@ ${steps.join('\n')}
 
 Report what actually happened. If a command fails, report the failure verbatim — do not retry in a loop
 and do not work around it.`,
-    { schema: CLEANUP_SCHEMA, label: 'cleanup', phase: 'Cleanup', model: modelFor('cleanup') }
+    { ...(args.runtime ? { cwd: repoRoot } : {}), schema: CLEANUP_SCHEMA, label: 'cleanup', phase: 'Cleanup', model: modelFor('cleanup') }
   )
   // APL-7 discipline: a null result means cleanup never ran. Say so rather than reporting it as released.
   if (!res) {
@@ -677,7 +677,7 @@ ${taskIsLinearRefOnly ? `0. RESOLVE THE ISSUE FIRST (APL-35). The request above 
    can challenge the observation rather than re-litigate the question.
 
 Return contractPath and openQuestions. Do NOT make any code changes.`,
-    { schema: CONTRACT_SCHEMA, label: 'contract', phase: 'Contract', model: modelFor('contract') }
+    { ...(args.runtime ? { cwd: runCwd } : {}), schema: CONTRACT_SCHEMA, label: 'contract', phase: 'Contract', model: modelFor('contract') }
   )
   contract = c?.contractPath
   openQuestions = c?.openQuestions || []
@@ -815,7 +815,7 @@ If you took the lock but then have to return ok:false for any later reason, REMO
 (rm -rf "${sharedLockPath}") before returning — a failed run must not leave the tree locked.
 
 Return ok:true ONLY if HEAD is verifiably on "${taskBranch}". Otherwise ok:false with a concrete error.`,
-  { schema: BRANCH_SCHEMA, label: `branch:${taskBranch}`, phase: 'Branch', model: modelFor('branch') }
+  { ...(args.runtime ? { cwd: runCwd } : {}), schema: BRANCH_SCHEMA, label: `branch:${taskBranch}`, phase: 'Branch', model: modelFor('branch') }
 )
 
 // APL-45: record what we are holding BEFORE the failure check, so a branch stage that took the lock and
@@ -944,11 +944,11 @@ ${baselineBlock}${feedbackBlock}0. FIRST, before any change: run 'git status --s
 If you cannot complete, return status "blocked" with a concrete blockedReason.
 
 Return structured output only.`,
-    { schema: IMPLEMENTER_SCHEMA, label: feedback ? `implementer:round-${round}` : 'implementer', phase: 'Implement', model: modelFor('implement') }
+    { ...(args.runtime ? { cwd: runCwd } : {}), schema: IMPLEMENTER_SCHEMA, label: feedback ? `implementer:round-${round}` : 'implementer', phase: 'Implement', model: modelFor('implement') }
   )
 }
 
-impl = await runImplement(null)
+impl = await runImplement(args.feedback || null)
 if (!impl || impl.status === 'blocked') {
   return await blocked({
     status: 'blocked', stage: 'implement',
@@ -983,7 +983,7 @@ Any file present in this baseline is PRE-EXISTING work — do NOT flag it. Only 
 3. Be adversarial. If in doubt, flag it.
 
 Return structured output only.`,
-    { schema: AUDIT_SCHEMA, label: `audit:${tag}`, phase: 'Audit', model: modelFor('audit') }
+    { ...(args.runtime ? { cwd: runCwd } : {}), schema: AUDIT_SCHEMA, label: `audit:${tag}`, phase: 'Audit', model: modelFor('audit') }
   )
   // APL-7: agent() returns null when the subagent dies on a terminal API error. A null auditor has
   // verified NOTHING — it must never read as clean. Fail hard instead of silently passing the gate.
@@ -1059,7 +1059,7 @@ fix it. If a failure pre-dates this task (it also fails on the untouched baselin
 failed and say so explicitly, so the orchestrator can see it is not a regression.
 
 Honesty is the whole point of this stage.`,
-    { schema: VERIFY_SCHEMA, label: 'verify-gate', phase: 'Verify', model: modelFor('verify') }
+    { ...(args.runtime ? { cwd: runCwd } : {}), schema: VERIFY_SCHEMA, label: 'verify-gate', phase: 'Verify', model: modelFor('verify') }
   )
 
   // APL-7: a null result means the gate never ran — never read that as green.
@@ -1122,8 +1122,47 @@ const ALWAYS_RERUN_LENSES = ['bugs', 'contract']
 // One entry per review round: what was examined, what was not, and why. Returned in the result.
 const reviewCoverage = []
 
+const GITHUB_REVIEW_SCHEMA = {
+  type: 'object', required: ['approved', 'fatal'], properties: {
+    approved: { type: 'boolean' }, fatal: { type: 'boolean' }, fatalReason: { type: 'string' },
+    published: { type: 'boolean' }, head: { type: 'string' }, notes: { type: 'string' },
+    blockingIssues: { type: 'array', items: { type: 'string' } },
+    confirmed: { type: 'array', items: { type: 'object' } },
+    threads: { type: 'array', items: { type: 'object' } },
+  },
+}
+const shellQuote = value => "'" + String(value).replace(/'/g, "'\"'\"'") + "'"
+async function replyToReview(result, commitHash) {
+  if (!args.githubReview || !(result?.threads || []).length) return true
+  const response = await agent(
+    `You are the IMPLEMENTER replying to review threads. Where you made a fix, cite the pushed change; for remaining non-blocking suggestions, explain disposition honestly. Repo: ${runCwd}. PR: ${pr.prUrl}. Commit: ${commitHash}.\n`
+      + `Read every thread and the actual diff. Explain what changed, tests run, or an evidence-based disagreement. Do not claim fixes you did not verify.\n`
+      + `Threads: ${JSON.stringify(result.threads)}\n`
+      + `Write a JSON array of {id, body} replies to a temporary file, then publish through:\n`
+      + `node ${shellQuote(PLUGIN_ROOT + '/harness/review.mjs')} --cwd ${shellQuote(runCwd)} --pr ${shellQuote(pr.prUrl)} --replies <file> --commit ${shellQuote(commitHash)}\n`
+      + `Return replied:true only after all replies were posted successfully.`,
+    { ...(args.runtime ? { cwd: runCwd } : {}), label: 'review-replies', ...(args.runtime ? { replyRequest: { pr: pr.prUrl, commit: commitHash, threads: result.threads } } : {}), schema: { type: 'object', required: ['replied'], properties: { replied: { type: 'boolean' } } } }
+  )
+  return response?.replied === true
+}
+
 async function runReview(reviewRound, sinceCommit, liveLenses) {
   phase('Review')
+  // The same harness serves native Workflow sessions, portable runtimes and standalone reviews.
+  if (args.githubReview === true) {
+    const payload = { cwd: runCwd, pr: pr?.prUrl, contract, runtime: args.runtime || 'claude' }
+    const result = await agent(
+      `Run the independent GitHub review harness. Do not review the code yourself. Execute:\n` +
+      `node ${shellQuote(PLUGIN_ROOT + '/harness/review.mjs')} --cwd ${shellQuote(runCwd)} --pr ${shellQuote(pr?.prUrl || '')} --contract ${shellQuote(contract)} --publish\n` +
+      `Return its JSON result. A nonzero exit means fatal:true, approved:false; include stderr as fatalReason.`,
+      { ...(args.runtime ? { cwd: runCwd } : {}), label: 'github-review', phase: 'Review', ...(args.runtime ? { reviewRequest: payload } : {}), schema: GITHUB_REVIEW_SCHEMA }
+    )
+    if (!result || result.fatal || typeof result.approved !== 'boolean' || result.published !== true) {
+      return { approved: false, fatal: true, fatalReason: result?.fatalReason || 'Independent GitHub review was not published' }
+    }
+    reviewCoverage.push({ round: reviewRound, lensesRun: ['bugs', 'contract', 'test-gaps'], lensesSkipped: [], diffScope: result.head, reason: 'independent GitHub review of the complete PR head' })
+    return result
+  }
   const DIMENSIONS = [
     { key: 'bugs', prompt: 'Hunt for REAL bugs and logic errors in the diff. Only report issues you can point to a concrete line for.' },
     { key: 'test-gaps', prompt: 'Check whether the changes are covered by tests that would actually fail on regression. Note missing coverage that matters.' },
@@ -1179,7 +1218,7 @@ ${scoped && d.key === 'contract' ? `Additionally this round (the test-gaps lens 
 flag any new logic in the fix that nothing tests.
 ` : ''}You have NO context from the implementer — judge only what you see in the diff and the contract.
 Report concrete findings (file + line + what breaks). Report nothing if clean.`,
-        { schema: FINDINGS_SCHEMA, label: `review:${d.key}`, phase: 'Review', model: modelFor(`review:${d.key}`) }
+        { ...(args.runtime ? { cwd: runCwd } : {}), schema: FINDINGS_SCHEMA, label: `review:${d.key}`, phase: 'Review', model: modelFor(`review:${d.key}`) }
       )
     )
   )
@@ -1242,7 +1281,7 @@ APL-45: that default makes reading the WRONG tree indistinguishable from a refut
 unmodified copy of the file refutes everything. So if you cannot find the file under ${runCwd}, or the
 diff there does not contain the change under review, do NOT return isReal:false. Return isReal:true with
 a reason saying you could not read the file, so a real finding is never dropped by a path mistake.`,
-        { schema: VERDICT_SCHEMA, label: `refute:${(f.file || '?').split('/').pop()}`, phase: 'Review', model: modelFor('refute') }
+        { ...(args.runtime ? { cwd: runCwd } : {}), schema: VERDICT_SCHEMA, label: `refute:${(f.file || '?').split('/').pop()}`, phase: 'Review', model: modelFor('refute') }
       )
     )
   )
@@ -1269,7 +1308,7 @@ Decide:
   violations, or scope creep that must be fixed). Nits and deferrable items are non-blocking.
 - blockingIssues = the confirmed findings that must block (human-readable).
 - notes = non-blocking observations + a 2-line summary of the diff.`,
-    { schema: SYNTH_SCHEMA, label: 'synthesis', phase: 'Review', model: modelFor('synthesis') }
+    { ...(args.runtime ? { cwd: runCwd } : {}), schema: SYNTH_SCHEMA, label: 'synthesis', phase: 'Review', model: modelFor('synthesis') }
   )
 
   if (!synth) {
@@ -1386,11 +1425,11 @@ async function commitStage(label) {
 3. Verify the staged set is limited to the task's files. Commit with a message summarizing WHY the change
    was made, matching the repo's git log style (run: git log --oneline -5).${issueId ? ` Put the issue key
    ${issueId} in the subject line, in parentheses, so the history is traceable to the tracker.` : ''} Include the trailer line:
-   Co-Authored-By: Claude <noreply@anthropic.com>
+   ${args.runtime === 'codex' ? 'Co-Authored-By: Codex <noreply@openai.com>' : args.runtime === 'dsh' ? 'Generated-by: DeepSeek Harness' : 'Co-Authored-By: Claude <noreply@anthropic.com>'}
 4. Push: git push -u origin HEAD  (a failed push is a failure — report it).
 
 Return commitHash + committedFiles + message + pushed (pushed = true ONLY if the push succeeded).`,
-    { schema: COMMIT_SCHEMA, label: 'committer:' + label, phase: 'Commit', model: modelFor('commit') }
+    { ...(args.runtime ? { cwd: runCwd } : {}), schema: COMMIT_SCHEMA, label: 'committer:' + label, phase: 'Commit', model: modelFor('commit') }
   )
 }
 
@@ -1409,7 +1448,7 @@ The task's changes are committed and pushed on the current branch.
    diff is reviewable; the PR can be opened manually.
 
 Return prUrl + prNumber (+ note if any).`,
-    { schema: PR_SCHEMA, label: 'pr-opener', phase: 'PR', model: modelFor('pr') }
+    { ...(args.runtime ? { cwd: runCwd } : {}), schema: PR_SCHEMA, label: 'pr-opener', phase: 'PR', model: modelFor('pr') }
   )
 }
 
@@ -1482,6 +1521,7 @@ if (!noCommit && budgetExhausted()) {
       return await blocked({ status: 'blocked', stage: 'commit', blockedReason: 'fix-round commit or push failed', fixLog, pr })
     }
     commitLog.push(fixCommit)
+    if (!await replyToReview(reviewRes, fixCommit.commitHash)) return await blocked({ status: 'blocked', stage: 'review-replies', blockedReason: 'Implementer replies were not published', pr, fixLog })
     reviewRound += 1
     const sinceCommit = lastReviewedCommit
     lastReviewedCommit = fixCommit.commitHash || lastReviewedCommit
@@ -1490,6 +1530,7 @@ if (!noCommit && budgetExhausted()) {
       return await blocked({ status: 'blocked', stage: 'review', fatal: true, blockedReason: reviewRes.fatalReason, fixLog, pr, commits: commitLog, reviewCoverage })
     }
   }
+  if (!exhausted && !await replyToReview(reviewRes, lastReviewedCommit)) return await blocked({ status: 'blocked', stage: 'review-replies', blockedReason: 'Implementer replies were not published', pr, fixLog })
   if (exhausted) {
     return await blocked({
       status: 'blocked', stage: 'review', terminal: terminalState(pr),
@@ -1548,7 +1589,7 @@ deliberately did NOT fix. Your job is to decide which deserve a Linear issue, an
 
 Never fail the task over Linear: if the script cannot reach it, put the error in \`failed\` and return
 normally. Do not fix any of the underlying problems — filing them is the entire job.`,
-    { schema: FOLLOWUPS_SCHEMA, label: 'followups', phase: 'Follow-ups', model: modelFor('followups') }
+    { ...(args.runtime ? { cwd: runCwd } : {}), schema: FOLLOWUPS_SCHEMA, label: 'followups', phase: 'Follow-ups', model: modelFor('followups') }
   )
   if (followups?.failed?.length) {
     log(`Follow-ups: ${followups.failed.length} entr(ies) could NOT be filed — they are in the result and `
