@@ -3,6 +3,27 @@ name: workflow-feature
 description: The workflow a dispatched session runs for a feature, improvement or bug: contract → implement → audit → verify → commit → PR → review (fixes pushed to the PR). Auto-commits, opens a PR, never merges — unless you pass noCommit.
 ---
 
+## Runtime compatibility (read first)
+
+These instructions apply to Claude Code, Codex and DeepSeek Harness (`dsh`). Resolve
+`CYCLER_ROOT` from the environment, `CLAUDE_PLUGIN_ROOT`, or this skill's directory (`../..`).
+`CLAUDE_PLUGIN_ROOT` in the legacy instructions below is a compatibility alias for that root;
+`CLAUDE_CODE_SESSION_ID` may be replaced with `CYCLER_SESSION_ID` or the current runtime session ID.
+Use the tools available in your runtime; `ToolSearch` is not a prerequisite for research or Linear.
+
+When the native `Workflow` tool is unavailable (Codex, dsh, or a Claude install without it),
+run the SAME lifecycle through the portable runner and report its result:
+
+```bash
+node "$CYCLER_ROOT/workflows/run.mjs" --runtime '<claude|codex|dsh>' --cwd "$PWD" --workflow workflow-feature --task '<complete request or issue key>'
+```
+
+Pass `--contract <path>` to reuse a contract; `--no-commit` leaves changes for inspection.
+Do not continue into the native `Workflow(...)` instructions after this runner completes.
+The runner owns independent stages, gate enforcement, GitHub comments and implementer replies.
+
+
+
 # /workflow-feature — full task lifecycle in a single workflow
 
 ## Inputs
@@ -79,6 +100,7 @@ report it as a clean review.
 
 ```js
 Workflow({ scriptPath: '.claude/workflows/task-orchestration.js', args: {
+  githubReview: true, // shared standalone harness: publishes GitHub review threads and implementer replies
   task: '<the user request verbatim — or, for a Linear reference, the resolved issue title + description>',
   cwd: '<repo.path from the cycler config — REQUIRED, the workflow throws without it>',
   pluginRoot: '<the ${CLAUDE_PLUGIN_ROOT} you echoed above — REQUIRED, the workflow throws without it>',

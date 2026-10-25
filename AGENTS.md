@@ -204,3 +204,20 @@ happens.
 - No poller-side status writes — the workflow owns those.
 - No Slack, GitHub or GitLab triggers.
 - No genericising the harness into an empty framework. It ships opinionated and working.
+
+
+## 11. Portable runtimes and GitHub review
+
+The Claude-specific descriptions above document the legacy default. `dispatch.runtime` now also
+supports `codex` and `dsh`: `poller/managed.mjs` owns detached workers, `workflows/run.mjs` supplies
+the runtime primitives for the same lifecycle, and `lib/runtimes.mjs` owns executable/model routing.
+Managed runs never depend on the Claude keychain or registry. Audit and gate run deterministically
+before commit stages. Claude PreToolUse hooks remain Claude-specific; do not claim they protect
+other runtimes. Native skills enable `githubReview: true`; portable runs enable it by default.
+
+`harness/review.mjs` is separate from implementation and Linear. The `workflow-review` skill runs it
+standalone. It fetches the exact PR head into a detached worktree, runs independent reviewers,
+verifies blockers and publishes actual GitHub COMMENT reviews with validated inline locations.
+Missing results and stale heads fail. Implementer replies go to the original threads with a pushed
+commit SHA. `.agents/skills` wrappers expose all workflows and commands to Codex and dsh.
+Full setup and current live-test limits: `docs/specs/005-runtimes.md`.

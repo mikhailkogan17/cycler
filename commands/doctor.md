@@ -2,6 +2,10 @@
 description: Diagnose a cycler install — config, token, launchd job, paths, repo, workflow, routes, gate and leftovers.
 ---
 
+Resolve `CYCLER_ROOT` from the shared skill entry point or `CLAUDE_PLUGIN_ROOT`, then set
+`CLAUDE_PLUGIN_ROOT` to that same path for the legacy shell snippets below.
+
+
 Run every check below and report each as OK or the specific failure. Do not stop at the first
 failure; a partial diagnosis sends people to fix the wrong thing.
 
@@ -56,7 +60,18 @@ The printed `Label` must equal `$LABEL`. `launchctl` addresses jobs by **label, 
 mismatch fails with a 501 that reads like "not running". Report the configured label by name, so a
 user who changed `launchd.label` can see which job was actually checked.
 
-## 3. Absolute binaries
+## 3. Runtime and absolute binaries
+
+Read `dispatch.runtime` first. For `codex` or `dsh`, inspect `runtimes.<runtime>.bin` and run
+its `--version`, then the headless help (`codex exec --help` or `dsh --profile headless --help`).
+Check `.agents/skills/cycler-workflow-feature/SKILL.md` rather than the Claude workflow copy.
+Inspect `$CYCLER_HOME/managed.json` and each referenced `statePath`/`worker.log` for failures.
+Use `~/.cycler` when CYCLER_HOME is unset. No Claude keychain or `claude agents` checks apply.
+Do not print environment variables or credential files. DSH headless uses launch credentials by
+default; GUI sign-in requires the overlay documented in `docs/specs/005-runtimes.md`.
+For managed runtimes skip the Claude-specific binary and workflow-copy checks below.
+
+### Claude binaries
 
 ```bash
 /usr/libexec/PlistBuddy -c "Print :ProgramArguments:0" "$PLIST"

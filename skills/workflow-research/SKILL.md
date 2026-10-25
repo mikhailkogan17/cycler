@@ -3,6 +3,16 @@ name: workflow-research
 description: The workflow a dispatched session runs for a RESEARCH issue — investigate, decide, post findings to Linear. No code, no contract, no gate. Use for issues labelled Research, or any question whose deliverable is a decision rather than a diff.
 ---
 
+## Runtime compatibility (read first)
+
+These instructions apply to Claude Code, Codex and DeepSeek Harness (`dsh`). Resolve
+`CYCLER_ROOT` from the environment, `CLAUDE_PLUGIN_ROOT`, or this skill's directory (`../..`).
+`CLAUDE_PLUGIN_ROOT` in the legacy instructions below is a compatibility alias for that root;
+`CLAUDE_CODE_SESSION_ID` may be replaced with `CYCLER_SESSION_ID` or the current runtime session ID.
+Use the tools available in your runtime; `ToolSearch` is not a prerequisite for research or Linear.
+
+
+
 # /workflow-research — investigation whose deliverable is a decision
 
 `/workflow-feature` is for changing code. This is for the issues where the output is a **recommendation** — the

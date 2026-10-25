@@ -3,6 +3,16 @@ name: workflow-intake
 description: OPTIONAL manual intake, run by hand rather than dispatched — write a task contract by hand, then pass contractPath to /workflow-feature. For full automation just use /workflow-feature directly.
 ---
 
+## Runtime compatibility (read first)
+
+These instructions apply to Claude Code, Codex and DeepSeek Harness (`dsh`). Resolve
+`CYCLER_ROOT` from the environment, `CLAUDE_PLUGIN_ROOT`, or this skill's directory (`../..`).
+`CLAUDE_PLUGIN_ROOT` in the legacy instructions below is a compatibility alias for that root;
+`CLAUDE_CODE_SESSION_ID` may be replaced with `CYCLER_SESSION_ID` or the current runtime session ID.
+Use the tools available in your runtime; `ToolSearch` is not a prerequisite for research or Linear.
+
+
+
 # /workflow-intake — manual contract authoring (optional)
 
 For full automation, just use `/workflow-feature` — it authors the contract itself. Use `/workflow-intake` when you want

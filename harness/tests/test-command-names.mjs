@@ -28,7 +28,7 @@ let fails = 0;
 const t = (n, fn) => { try { fn(); console.log('PASS', n) } catch (e) { fails++; console.log('FAIL', n, '\n  ', e.message) } };
 
 const COMMANDS = ['delegate', 'doctor', 'start', 'stop'];
-const WORKFLOWS = ['workflow-bug', 'workflow-feature', 'workflow-intake', 'workflow-research'];
+const WORKFLOWS = ['workflow-bug', 'workflow-feature', 'workflow-intake', 'workflow-research', 'workflow-review'];
 // workflow-bug is an ALIAS: the Bug label needs a route of its own, the lifecycle behind it does not.
 const ALIASES = { 'workflow-bug': 'workflow-feature' };
 const RETIRED = ['setup', 'start-polling', 'stop-polling', 'setup-linear', 'issue', 'task', 'research', 'intake'];

@@ -4,3 +4,7 @@ node_modules/
 # Contracts are per-run working state, never source.
 .claude/harness/contracts/
 .test-results/
+
+# Local shared skill entry points contain this installation's absolute path.
+.agents/skills/cycler-*/
+.claude/worktrees/

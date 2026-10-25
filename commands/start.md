@@ -2,6 +2,9 @@
 description: Start cycler — set up whatever is not set up yet, then load the launchd polling job.
 ---
 
+Resolve `CYCLER_ROOT` from the skill entry point or `CLAUDE_PLUGIN_ROOT`; use it as the legacy
+`CLAUDE_PLUGIN_ROOT` alias throughout these commands.
+
 Start cycler in this repo. There is one command for both the first run and every run after it: on a
 fresh machine this is the full setup, and on a configured one it is "make sure the loop is on".
 
@@ -74,7 +77,22 @@ A browser opens. The user approves. The token lands in `~/.cycler/token.json`.
 Linear access tokens expire after 24h; the poller refreshes them itself, so this is genuinely
 one-time unless the token is revoked.
 
-## 4. Install the workflow into the repo
+## 4. Select the execution runtime and install shared skills
+
+Read `dispatch.runtime` (`claude`, `codex`, or `dsh`, default `claude`). Respect the user's choice.
+For Codex or dsh, run `node "$CYCLER_ROOT/harness/install-skills.mjs" --repo "$PWD"`.
+Set `runtimes.<runtime>.bin` to the absolute installed executable. Verify `codex exec --help` or
+`dsh --profile headless --help`; authenticate using that CLI. For dsh see
+`docs/specs/005-runtimes.md` for headless credentials and Cordis model patches.
+Remove a Claude-specific `dispatch.command` when selecting a managed runtime.
+Skip the native workflow copy and PreToolUse hook installation below for Codex/dsh:
+the portable runner executes the source workflow and runs audit/gate before commit.
+Continue at step 6, then install the same outbound launchd poller. `CLAUDE_BIN` in the launchd
+example is needed only for Claude; Codex/dsh use their configured absolute binary paths.
+
+For Claude's native Workflow tool, continue with the copy below.
+
+### Native workflow copy
 
 ```bash
 mkdir -p .claude/workflows

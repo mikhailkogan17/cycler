@@ -38,6 +38,8 @@ import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { readConfig, configPath, pick } from '../lib/yaml.mjs';
 import { followUp } from './followup.mjs';
+import { managedPoll } from './managed.mjs';
+import { runtimeName } from '../lib/runtimes.mjs';
 
 // State, not config: everything in here is written by this process. The config lives in
 // ~/.config/cycler/config.yaml and is never written to.
@@ -79,7 +81,7 @@ const PATH_PREPEND = (Array.isArray(prepend) && prepend.length
 // it sent the session a literal string with no skill behind it.
 const WORKFLOW = process.env.CYCLER_WORKFLOW || cfg('workflows.default') || '/cycler:workflow-feature';
 const MAX_PER_POLL = 50;
-const BRANCH_PREFIX = cfg('repo.branch_prefix') || 'claude/';
+const BRANCH_PREFIX = cfg('repo.branch_prefix') || `${runtimeName(ycfg)}/`;
 // How long a dispatched session gets to post its start marker before it is declared dead, and how
 // many times an issue is re-dispatched before the poller stops trying. Both are config keys because
 // "how slow is a cold start here" is a machine fact, not a universal one. Read through cfg() like
@@ -1505,6 +1507,11 @@ async function poll() {
      }`,
     { delegateId: viewer.id }
   );
+
+  if (runtimeName(ycfg) !== 'claude') {
+    return managedPoll({ dir: DIR, issues: issues.nodes, runtime: runtimeName(ycfg), cwd: REPO_PATH, config: ycfg, workflowFor, comment, isBlocked, log, prFor: defaultPrFor,
+      env: { ...process.env, PATH: [...PATH_PREPEND, process.env.PATH || '/usr/bin:/bin'].join(':') } });
+  }
 
   // Before dispatching anything new: settle the fate of what was dispatched last time. This can
   // un-process an issue, which is what makes a dead dispatch retry below in the same poll.

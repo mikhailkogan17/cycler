@@ -234,3 +234,21 @@ a feature that was deleted.
 Writing this table is what surfaced a `linear.mode` key that the example documented and nothing
 implemented. It has been removed. A config key that does nothing is worse than no key: it is a
 promise the code does not keep.
+
+
+## Runtime and independent review settings
+
+- `dispatch.runtime`: `claude` (default), `codex`, `dsh`; override with `CYCLER_RUNTIME`.
+- `dispatch.stage_timeout_seconds`: per CLI call, default 1800.
+- `runtimes.<runtime>.bin`: executable; also `CLAUDE_BIN`, `CODEX_BIN`, `DSH_BIN` overrides.
+- `runtimes.<runtime>.args`: literal argument list, never evaluated by a shell.
+- `runtimes.<runtime>.model`: default model; Claude aliases are never sent to Codex/dsh.
+- `runtimes.codex.sandbox`: default `workspace-write`; review uses `read-only`.
+- `runtimes.dsh.profile`: default `headless`.
+- `runtimes.dsh.patch`: Cordis overlay path; `model_patches` maps model names to overlay paths.
+- `review.runtime`, `review.model`: independent review defaults.
+- `review.lenses.<lens>.runtime` / `.model`: overrides for bugs, contract and test-gaps.
+
+`dispatch.command` remains the legacy Claude background template. Managed runtimes use
+`workflows/run.mjs`; their CLI settings belong in `runtimes`, not a shell command template.
+See [runtime support](005-runtimes.md).
