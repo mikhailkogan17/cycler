@@ -244,6 +244,10 @@ promise the code does not keep.
 - `runtimes.<runtime>.args`: literal argument list, never evaluated by a shell.
 - `runtimes.<runtime>.model`: default model; Claude aliases are never sent to Codex/dsh.
 - `runtimes.codex.sandbox`: default `workspace-write`; review uses `read-only`.
+- `runtimes.codex.transport`: `exec` (legacy default) or `app-server` (named desktop chats).
+- `runtimes.codex.approvals`: app-server only, `deny` (default) or explicitly authorized `auto-review`.
+  Automatic review retains `workspace-write` and uses Codex's reviewer for individual escalations.
+  Read-only reviews always deny escalation. Do not pass `--approve-for-me` through app-server args.
 - `runtimes.dsh.profile`: default `headless`.
 - `runtimes.dsh.patch`: Cordis overlay path; `model_patches` maps model names to overlay paths.
 - `review.runtime`, `review.model`: independent review defaults.
