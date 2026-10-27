@@ -19,6 +19,11 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   appendFileSync(process.env.CYCLER_TEST_JOURNAL, line+'\\n');
   if (!r.id) return;
   if (r.method === 'initialize') send({id:r.id,result:{userAgent:'fake'}});
+  else if (r.method === 'account/rateLimits/read') {
+    if (mode === 'quota-rpc-error') { send({id:r.id,error:{message:'usage unavailable'}}); return; }
+    const bucket = {limitId:'codex',primary:{usedPercent:mode === 'quota-primary' ? 80 : 1,resetsAt:123},secondary:{usedPercent:mode === 'quota-weekly' ? 80 : 30,resetsAt:456}};
+    send({id:r.id,result:mode === 'quota-missing' ? {} : {ordinaryUsageAllowed:mode !== 'quota-denied',rateLimitsByLimitId:{codex:bucket}}});
+  }
   else if (r.method === 'thread/start' || r.method === 'thread/resume') { currentThread = r.params.threadId || 'thread-1'; send({id:r.id,result:{thread:{id:currentThread,source:'vscode',cwd:r.params.cwd},model:r.params.model}}); }
   else if (r.method === 'thread/name/set') send({id:r.id,result:{}});
   else if (r.method === 'turn/start') {
@@ -59,6 +64,17 @@ try {
   assert.equal(ok.threads[0].id, 'thread-1');
   assert.equal(ok.threads[0].source, 'vscode');
   assert.equal(ok.threads[0].model, 'test-model');
+  assert.equal(ok.calls.some(x => x.method === 'account/rateLimits/read'), false, 'legacy default stays unchanged');
+  const budgeted = await run('ok', { usageReservePercent: 20 });
+  assert(budgeted.calls.findIndex(x => x.method === 'account/rateLimits/read') < budgeted.calls.findIndex(x => x.method === 'thread/start'));
+  for (const mode of ['quota-primary', 'quota-weekly', 'quota-missing', 'quota-denied', 'quota-rpc-error']) {
+    const journalIndex = index;
+    await assert.rejects(run(mode, { usageReservePercent: 20 }), e => e.code === 'CYCLER_QUOTA_HOLD');
+    const heldCalls = readFileSync(join(temp, `journal-${journalIndex}.jsonl`), 'utf8').trim().split('\n').map(JSON.parse);
+    assert(!heldCalls.some(x => ['thread/start', 'thread/resume', 'turn/start'].includes(x.method)), 'a quota hold never starts a paid model turn');
+  }
+  await assert.rejects(run('ok', { usageReservePercent: 0 }), /usage_reserve_percent/);
+  await assert.rejects(run('ok', { usageReservePercent: 100 }), /usage_reserve_percent/);
   const resumed = await run('ok', { threadId: 'workflow-thread', cwd: temp });
   assert.equal(resumed.calls.some(x => x.method === 'thread/start'), false);
   const resume = resumed.calls.find(x => x.method === 'thread/resume').params;
