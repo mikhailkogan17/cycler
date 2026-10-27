@@ -12,21 +12,22 @@ writeFileSync(fake, `#!/usr/bin/env node
 import readline from 'node:readline';
 import { appendFileSync } from 'node:fs';
 const mode = process.env.CYCLER_TEST_MODE || 'ok';
+let currentThread = 'thread-1';
 const send = x => process.stdout.write(JSON.stringify(x)+'\\n');
 readline.createInterface({ input: process.stdin }).on('line', line => {
   const r = JSON.parse(line);
   appendFileSync(process.env.CYCLER_TEST_JOURNAL, line+'\\n');
   if (!r.id) return;
   if (r.method === 'initialize') send({id:r.id,result:{userAgent:'fake'}});
-  else if (r.method === 'thread/start') send({id:r.id,result:{thread:{id:'thread-1',source:'vscode',cwd:r.params.cwd},model:r.params.model}});
+  else if (r.method === 'thread/start' || r.method === 'thread/resume') { currentThread = r.params.threadId || 'thread-1'; send({id:r.id,result:{thread:{id:currentThread,source:'vscode',cwd:r.params.cwd},model:r.params.model}}); }
   else if (r.method === 'thread/name/set') send({id:r.id,result:{}});
   else if (r.method === 'turn/start') {
     send({id:r.id,result:{turn:{id:'turn-1',status:'inProgress'}}});
     if (mode === 'hang') return;
-    if (mode === 'approval') { send({id:999,method:'item/commandExecution/requestApproval',params:{threadId:'thread-1'}}); return; }
+    if (mode === 'approval') { send({id:999,method:'item/commandExecution/requestApproval',params:{threadId:currentThread}}); return; }
     if (mode === 'rpc-error') { send({id:r.id,error:{code:-32602,message:'bad config'}}); return; }
-    if (mode !== 'empty') send({method:'item/completed',params:{threadId:'thread-1',turnId:'turn-1',item:{id:'message-1',type:'agentMessage',phase:mode === 'legacy' ? undefined : mode === 'commentary' ? 'commentary' : mode === 'partial' ? 'partial_answer' : 'final_answer',text:mode === 'invalid-nested' ? '{"checks":[{"passed":"yes"}]}' : '{"ok":true}'}}});
-    send({method:'turn/completed',params:{threadId:'thread-1',turn:{id:'turn-1',status:mode === 'failed' ? 'failed' : mode === 'interrupted' ? 'interrupted' : 'completed',error:mode === 'failed' ? {message:'provider failed'} : null}}});
+    if (mode !== 'empty') send({method:'item/completed',params:{threadId:currentThread,turnId:'turn-1',item:{id:'message-1',type:'agentMessage',phase:mode === 'legacy' ? undefined : mode === 'commentary' ? 'commentary' : mode === 'partial' ? 'partial_answer' : 'final_answer',text:mode === 'invalid-nested' ? '{"checks":[{"passed":"yes"}]}' : '{"ok":true}'}}});
+    send({method:'turn/completed',params:{threadId:currentThread,turn:{id:'turn-1',status:mode === 'failed' ? 'failed' : mode === 'interrupted' ? 'interrupted' : 'completed',error:mode === 'failed' ? {message:'provider failed'} : null}}});
   }
 });
 `, { mode: 0o755 });
@@ -58,6 +59,20 @@ try {
   assert.equal(ok.threads[0].id, 'thread-1');
   assert.equal(ok.threads[0].source, 'vscode');
   assert.equal(ok.threads[0].model, 'test-model');
+  const resumed = await run('ok', { threadId: 'workflow-thread', cwd: temp });
+  assert.equal(resumed.calls.some(x => x.method === 'thread/start'), false);
+  const resume = resumed.calls.find(x => x.method === 'thread/resume').params;
+  assert.equal(resume.threadId, 'workflow-thread');
+  assert.equal(resume.cwd, temp);
+  assert.equal(resume.sandbox, 'workspace-write');
+  assert.equal(resume.approvalsReviewer, 'auto_review');
+  assert.equal('ephemeral' in resume, false);
+  assert.equal(resumed.threads[0].id, 'workflow-thread');
+  const isolated = await run('ok', { ephemeral: true });
+  assert.equal(isolated.calls.find(x => x.method === 'thread/start').params.ephemeral, true);
+  assert.equal(isolated.calls.some(x => x.method === 'thread/name/set'), false, 'ephemeral threads reject persistent metadata updates');
+  assert.equal(isolated.threads[0].ephemeral, true);
+  await assert.rejects(run('ok', { threadId: 'workflow-thread', ephemeral: true }), /ephemeral/);
 
   const readOnly = await run('ok', { readOnly: true });
   const ro = readOnly.calls.find(x => x.method === 'thread/start').params;

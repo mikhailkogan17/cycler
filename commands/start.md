@@ -85,7 +85,8 @@ Set `runtimes.<runtime>.bin` to the absolute installed executable. Verify `codex
 `dsh --profile headless --help`; authenticate using that CLI. For dsh see
 `docs/specs/005-runtimes.md` for headless credentials and Cordis model patches.
 Remove a Claude-specific `dispatch.command` when selecting a managed runtime.
-For desktop-visible Codex sessions select `runtimes.codex.transport: app-server`. Obtain explicit
+For desktop-visible Codex sessions select `runtimes.codex.transport: app-server` and
+`runtimes.codex.thread_mode: workflow` for one chat per task with fresh ephemeral checks. Obtain explicit
 authorization before setting `runtimes.codex.approvals: auto-review`: this routes individual sandbox
 and network escalations to Codex's reviewer while keeping workspace-write isolation. The default
 `deny` cannot perform Git writes protected by the sandbox. Do not insert `--approve-for-me` into
