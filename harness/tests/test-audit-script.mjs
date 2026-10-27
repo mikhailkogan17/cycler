@@ -2,7 +2,7 @@
 // it trustworthy: it must refuse to run blind, it must parse the contract's real bullet format, and a
 // violation must be DIRTY rather than a quiet pass.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,6 +38,7 @@ function run(dir, expectFail) {
     return e.stdout || "";
   }
 }
+const git = (dir, ...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8" });
 
 check("prose in a section is not a path declaration", () => {
   // APL-62. A contract that EXPLAINS itself was punished for it: audit.sh took every backticked
@@ -156,6 +157,106 @@ check("a new file in a NEW directory is judged as a file, not as its directory",
   const out = run(dir, false);
   assert(!/src\/deep\/$/m.test(out), "a directory was reported instead of the file:\n" + out);
   assert(/allowed-paths *clean/.test(out), "a listed file in a new directory read as out of scope:\n" + out);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+check("spaces, quotes, and Unicode in untracked and staged paths stay raw", () => {
+  const names = ['src/Document 1 (11).png', 'src/a "quoted" file.txt', 'src/עברית файл.txt'];
+  const dir = repo(
+    "## Allowed paths\n\n- `src/**`\n\n## Forbidden paths\n\n- `secret/**`\n\n" +
+    "## Files expected to change\n\n- `src/**`\n", names);
+  git(dir, "add", "--", names[0]);
+  const out = run(dir, false);
+  assert(/allowed-paths *clean/.test(out) && /scope *clean/.test(out), out);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+check("renaming a protected source into an allowed path remains DIRTY", () => {
+  const dir = repo(
+    "## Allowed paths\n\n- `src/renamed.txt`\n\n## Forbidden paths\n\n- `src/base.txt`\n\n" +
+    "## Files expected to change\n\n- `src/renamed.txt`\n", []);
+  git(dir, "switch", "-q", "-c", "feature");
+  git(dir, "mv", "src/base.txt", "src/renamed.txt");
+  const out = run(dir, true);
+  assert(/forbidden-paths *DIRTY/.test(out) && /src\/base.txt/.test(out), out);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+check("a staged change remains visible when the working file matches HEAD", () => {
+  const dir = repo(
+    "## Allowed paths\n\n- `src/other.txt`\n\n## Forbidden paths\n\n- `src/base.txt`\n", []);
+  writeFileSync(join(dir, "src/base.txt"), "staged");
+  git(dir, "add", "--", "src/base.txt");
+  writeFileSync(join(dir, "src/base.txt"), "base\n");
+  const out = run(dir, true);
+  assert(/forbidden-paths *DIRTY/.test(out), out);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+check("an invalid base fails before a cached clean result can be used", () => {
+  const dir = repo("## Allowed paths\n\n- `src/**`\n", []);
+  let failedClosed = false;
+  try {
+    execFileSync("bash", [AUDIT, "--base", "missing-ref"],
+      { cwd: dir, encoding: "utf8", env: { ...process.env, CONTRACT_PATH: ".claude/harness/contracts/c.md" }, stdio: "pipe" });
+  } catch (e) { failedClosed = e.status !== 0 && /unknown base/.test(e.stderr || ""); }
+  assert(failedClosed, "invalid base did not fail closed");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+check("cache invalidates when another path appears inside an untracked directory", () => {
+  const dir = repo(
+    "## Allowed paths\n\n- `src/**`\n\n## Forbidden paths\n\n- `src/secret.txt`\n\n" +
+    "## Files expected to change\n\n- `src/**`\n", ["src/ok.txt"]);
+  writeFileSync(join(dir, ".git/info/exclude"), ".test-results/\n");
+  run(dir, false);
+  writeFileSync(join(dir, "src/secret.txt"), "secret");
+  const out = run(dir, true);
+  assert(/forbidden-paths *DIRTY/.test(out), out);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+check("a wildcard authorizes a large committed deletion batch", () => {
+  const dir = repo(
+    "## Allowed paths\n\n- `src/**`\n\n## Files expected to change\n\n- `src/**`\n", []);
+  for (let i = 0; i < 24; i++) writeFileSync(join(dir, `src/old ${i}.txt`), "old");
+  git(dir, "add", "--", "src");
+  git(dir, "commit", "-qm", "fixture");
+  git(dir, "switch", "-q", "-c", "feature");
+  for (let i = 0; i < 24; i++) unlinkSync(join(dir, `src/old ${i}.txt`));
+  git(dir, "add", "-u");
+  git(dir, "commit", "-qm", "remove old files");
+  const out = run(dir, false);
+  assert(/scope *clean *\(24 changed, 24 listed\)/.test(out), out);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+check("unplanned additions still exceed the declared scope", () => {
+  const dir = repo(
+    "## Allowed paths\n\n- `src/**`\n\n## Files expected to change\n\n- `src/expected.txt`\n",
+    ["src/expected.txt", "src/extra 1.txt", "src/extra 2.txt"]);
+  git(dir, "add", "--", "src/expected.txt");
+  const out = run(dir, true);
+  assert(/scope *DIRTY/.test(out), out);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+check("an unmatched planned wildcard cannot disable scope checking", () => {
+  const dir = repo(
+    "## Allowed paths\n\n- `src/**`\n\n## Files expected to change\n\n" +
+    "- `src/planned/**`\n- `src/planned/**`\n",
+    ["src/unplanned/a.txt", "src/unplanned/b.txt", "src/unplanned/c.txt", "src/unplanned/d.txt"]);
+  const out = run(dir, true);
+  assert(/allowed-paths *clean/.test(out), out);
+  assert(/scope *DIRTY/.test(out) && /contract lists 1 file\(s\); the diff touches 4/.test(out), out);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+check("no expected-files section retains the no-scope default", () => {
+  const dir = repo("## Allowed paths\n\n- `src/**`\n",
+    ["src/a.txt", "src/b.txt", "src/c.txt", "src/d.txt"]);
+  const out = run(dir, false);
+  assert(/scope *clean *\(4 changed, 0 listed\)/.test(out), out);
   rmSync(dir, { recursive: true, force: true });
 });
 

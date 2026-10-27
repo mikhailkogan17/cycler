@@ -25,6 +25,24 @@ done
 [ -f "$CONTRACT_PATH" ]     || { echo "audit: no contract at $CONTRACT_PATH" >&2; exit 2; }
 
 REF="origin/$BASE"; git rev-parse --verify -q "$REF" >/dev/null || REF="$BASE"
+git rev-parse --verify -q "$REF" >/dev/null || { echo "audit: unknown base $BASE" >&2; exit 2; }
+
+# Enumerate raw, NUL-delimited paths before consulting the cache. --no-renames makes both the old
+# and new path of a rename visible to the path checks. A failed Git command must never look like an
+# empty (and therefore clean) diff. Bash 3.2 has no mapfile -d or associative arrays.
+paths_file=$(mktemp) || exit 2
+trap 'rm -f "$paths_file"' EXIT
+git diff --name-only --no-renames -z "$REF"...HEAD > "$paths_file" || exit 2
+git diff --cached --name-only --no-renames -z HEAD >> "$paths_file" || exit 2
+git diff --name-only --no-renames -z HEAD >> "$paths_file" || exit 2
+git ls-files --others --exclude-standard -z >> "$paths_file" || exit 2
+# Bash 3.2 with nounset treats an empty array expansion as unbound.
+CHANGED=("")
+while IFS= read -r -d '' f; do
+  found=0
+  for seen in "${CHANGED[@]}"; do [ "$seen" = "$f" ] && { found=1; break; }; done
+  [ "$found" -eq 1 ] || CHANGED+=("$f")
+done < "$paths_file"
 
 # Skip the whole thing when nothing has changed since the last clean run. The audit is a pure function
 # of (diff, contract), so re-running it on an identical tree can only produce the identical answer.
@@ -33,7 +51,7 @@ REF="origin/$BASE"; git rev-parse --verify -q "$REF" >/dev/null || REF="$BASE"
 #
 # The contract is part of the key: editing Allowed paths must invalidate a previous CLEAN.
 fingerprint() {
-  { git diff "$REF"...HEAD; git status --porcelain; cat "$CONTRACT_PATH"; } 2>/dev/null | shasum -a 256 | awk '{print $1}'
+  { git diff "$REF"...HEAD; printf '%s\0' "${CHANGED[@]}"; cat "$CONTRACT_PATH"; } 2>/dev/null | shasum -a 256 | awk '{print $1}'
 }
 FP=$(fingerprint)
 STAMP=".test-results/audit/last-clean"
@@ -48,7 +66,7 @@ fi
 # a single "tests/" entry. Every path check here compares against FILE globs, so a run that adds a new
 # file inside a new directory was reported as touching a path outside Allowed paths — naming a
 # directory the contract could not have listed. Another false DIRTY indistinguishable from a real one.
-CHANGED=$( { git diff --name-only "$REF"...HEAD; git status --porcelain -uall | sed 's/^...//'; } | sed '/^$/d' | sort -u )
+# git ls-files --others lists individual files even inside a wholly untracked directory.
 
 # Contract sections are bullet lists of globs; read until the next heading.
 # Take the backticked path out of each bullet. Contracts label entries ("New: `a/b.swift`",
@@ -120,7 +138,7 @@ report() { # name, offending list
 }
 
 outside=""; forbidden=""; generated=""
-while IFS= read -r f; do
+for f in "${CHANGED[@]}"; do
   [ -n "$f" ] || continue
   [ -n "$ALLOWED" ] && ! matches_any "$f" "$ALLOWED" && outside="$outside$f"$'\n'
   [ -n "$FORBIDDEN" ] && is_forbidden "$f" && forbidden="$forbidden$f"$'\n'
@@ -128,18 +146,42 @@ while IFS= read -r f; do
     node_modules/*|dist/*|build/*|*.log|.env*|config.local.yaml*|memory/profiles/*|memory/cvs/*|memory/apply-logs/*)
       generated="$generated$f"$'\n' ;;
   esac
-done <<< "$CHANGED"
+done
 
 report "allowed-paths " "$(echo "$outside" | sed '/^$/d')"
 report "forbidden-paths" "$(echo "$forbidden" | sed '/^$/d')"
 report "generated/secret" "$(echo "$generated" | sed '/^$/d')"
 
 # The contract must not be edited by the run it governs — that is how a diff "meets" its own checks.
-report "contract-intact" "$(echo "$CHANGED" | grep -F "$(basename "$CONTRACT_PATH")" || true)"
+contract_edits=""
+for f in "${CHANGED[@]}"; do
+  [ -n "$f" ] || continue
+  case "$f" in *"$(basename "$CONTRACT_PATH")"*) contract_edits="$contract_edits$f"$'\n' ;; esac
+done
+report "contract-intact" "$(printf '%s' "$contract_edits" | sed '/^$/d')"
 
-# Scope: compare against the contract's own file list.
-EXPECTED=$(section "Files expected to change" | wc -l | tr -d ' ')
-ACTUAL=$(echo "$CHANGED" | sed '/^$/d' | wc -l | tr -d ' ')
+# A wildcard declaration covers every changed path it matches, but overlap counts only once.
+# An unmatched declaration still budgets one path, so a planned wildcard with zero matches cannot
+# disable the scope check. With no Files expected section, preserve the legacy no-scope default.
+EXPECTED=0
+for f in "${CHANGED[@]}"; do
+  [ -n "$f" ] || continue
+  matches_any "$f" "$EXPECTED_FILES" && EXPECTED=$((EXPECTED + 1))
+done
+UNMATCHED=("")
+while IFS= read -r g; do
+  [ -n "$g" ] || continue
+  found=0
+  for f in "${CHANGED[@]}"; do
+    [ -n "$f" ] && matches_any "$f" "$g" && { found=1; break; }
+  done
+  if [ "$found" -eq 0 ]; then
+    # Repeated bullets describe one declaration, not extra scope budget.
+    for f in "${UNMATCHED[@]}"; do [ "$f" = "$g" ] && { found=1; break; }; done
+    if [ "$found" -eq 0 ]; then EXPECTED=$((EXPECTED + 1)); UNMATCHED+=("$g"); fi
+  fi
+done <<< "$EXPECTED_FILES"
+ACTUAL=$((${#CHANGED[@]} - 1))
 if [ "$EXPECTED" -gt 0 ] && [ "$ACTUAL" -gt $((EXPECTED * 2)) ]; then
   echo "AUDIT scope          DIRTY"; echo "  contract lists $EXPECTED file(s); the diff touches $ACTUAL"; fails=$((fails + 1))
 else
