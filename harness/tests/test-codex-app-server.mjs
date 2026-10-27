@@ -25,7 +25,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     if (mode === 'hang') return;
     if (mode === 'approval') { send({id:999,method:'item/commandExecution/requestApproval',params:{threadId:'thread-1'}}); return; }
     if (mode === 'rpc-error') { send({id:r.id,error:{code:-32602,message:'bad config'}}); return; }
-    if (mode !== 'empty') send({method:'item/completed',params:{threadId:'thread-1',turnId:'turn-1',item:{id:'message-1',type:'agentMessage',phase:mode === 'legacy' ? undefined : mode === 'commentary' ? 'commentary' : mode === 'partial' ? 'partial_answer' : 'final_answer',text:'{"ok":true}'}}});
+    if (mode !== 'empty') send({method:'item/completed',params:{threadId:'thread-1',turnId:'turn-1',item:{id:'message-1',type:'agentMessage',phase:mode === 'legacy' ? undefined : mode === 'commentary' ? 'commentary' : mode === 'partial' ? 'partial_answer' : 'final_answer',text:mode === 'invalid-nested' ? '{"checks":[{"passed":"yes"}]}' : '{"ok":true}'}}});
     send({method:'turn/completed',params:{threadId:'thread-1',turn:{id:'turn-1',status:mode === 'failed' ? 'failed' : mode === 'interrupted' ? 'interrupted' : 'completed',error:mode === 'failed' ? {message:'provider failed'} : null}}});
   }
 });
@@ -54,7 +54,7 @@ try {
   assert.equal(start.approvalsReviewer, 'auto_review');
   assert.equal(start.ephemeral, false);
   assert.equal(ok.calls.find(x => x.method === 'thread/name/set').params.name, 'APL-147 · implementer');
-  assert.equal(ok.calls.find(x => x.method === 'turn/start').params.outputSchema, undefined, 'workflow schemas are validated locally, not sent as incompatible strict output schemas');
+  assert.deepEqual(ok.calls.find(x => x.method === 'turn/start').params.outputSchema, schema);
   assert.equal(ok.threads[0].id, 'thread-1');
   assert.equal(ok.threads[0].source, 'vscode');
   assert.equal(ok.threads[0].model, 'test-model');
@@ -83,6 +83,21 @@ try {
   assert.deepEqual(await runAgent({ runtime: 'codex', cwd: temp, prompt: 'test', schema, label: 'implementer',
     config: { runtimes: { codex: { bin: fake, transport: 'app-server' } } }, onThread: t => threads.push(t) }), { ok: true });
   assert.equal(threads[0].name, 'Cycler · implementer');
+  const optional = { type: 'object', properties: { checks: { type: 'array', maxItems: 8, items: {
+    type: 'object', properties: { passed: { type: 'boolean' }, outputTail: { type: 'string' } }, required: ['passed']
+  } } }, required: [] };
+  const normalized = await run('ok', { schema: optional });
+  const sent = normalized.calls.find(x => x.method === 'turn/start').params.outputSchema;
+  assert.deepEqual(sent.required, ['checks']);
+  assert.equal(sent.additionalProperties, false);
+  assert.equal(sent.properties.checks.maxItems, 8);
+  assert.deepEqual(sent.properties.checks.items.required, ['passed', 'outputTail']);
+  assert.equal(sent.properties.checks.items.additionalProperties, false);
+  assert.deepEqual(optional.required, [], 'original workflow contract is unchanged');
+  process.env.CYCLER_TEST_MODE = 'invalid-nested';
+  await assert.rejects(runAgent({ runtime: 'codex', cwd: temp, prompt: 'test', schema: optional,
+    config: { runtimes: { codex: { bin: fake, transport: 'app-server' } } } }), /checks\[0\].passed: expected boolean/);
+  delete process.env.CYCLER_TEST_MODE;
   const statePath = join(temp, 'state.json');
   save(statePath, { status: 'running' });
   await runSkill({ workflow: 'workflow-research', task: 'a question', issueId: 'TEST-1', cwd: temp, runtime: 'codex', statePath,
