@@ -248,6 +248,9 @@ promise the code does not keep.
 - `runtimes.codex.thread_mode`: `stage` (legacy default) or `workflow` (one visible task chat,
   fresh ephemeral audit/verification/review sessions, and a final status turn in the task chat).
 - `runtimes.codex.approvals`: app-server only, `deny` (default) or explicitly authorized `auto-review`.
+- `runtimes.codex.usage_reserve_percent`: optional integer 1–99, app-server only. Read current
+  included-usage limits before every model turn; preserve this percent in both windows and fail
+  closed when usage permission or either window is unavailable. Does not buy credits or reset limits.
   Automatic review retains `workspace-write` and uses Codex's reviewer for individual escalations.
   Read-only reviews always deny escalation. Do not pass `--approve-for-me` through app-server args.
 - `runtimes.dsh.profile`: default `headless`.

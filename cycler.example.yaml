@@ -98,6 +98,8 @@ runtimes:
     transport: app-server
     # One visible task chat. Independent checks stay fresh and ephemeral.
     thread_mode: workflow
+    # Refuse new model turns when either Codex window reaches 80% used.
+    usage_reserve_percent: 20
     # deny (default) cannot escalate out of the sandbox. For unattended Git operations,
     # explicitly authorize auto-review: Codex reviews each request; cycler never accepts it.
     approvals: deny

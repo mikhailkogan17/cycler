@@ -42,6 +42,13 @@ The adapter validates `structured_output`, rather than parsing the human-facing 
 Provider errors, missing structured output and invalid values fail closed without a blind paid retry.
 Plain-text Claude requests retain text mode.
 
+Set `runtimes.codex.usage_reserve_percent: 20` to prevent a new Codex stage when either included-usage
+window is 80% used. The adapter reads `account/rateLimits/read` before starting/resuming a thread,
+without a model call. Unavailable data or ordinary-usage denial also holds work. Worker state records
+`quotaHold` for the controller; resumption requires a fresh allowed snapshot, not an inferred reset.
+This controls stage admission, not the tokens spent by an already admitted turn, so keep headroom
+and bounded workflow rounds. No extra credits or reset purchases are made.
+
 Git keeps `.git` read-only inside the ordinary workspace-write sandbox. Unattended Git stages need
 an explicit approval route: `runtimes.codex.approvals: auto-review` asks Codex's own reviewer to judge
 each escalation. The default `deny` will report blocked Git operations rather than disable isolation.

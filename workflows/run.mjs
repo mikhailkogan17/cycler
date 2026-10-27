@@ -43,7 +43,19 @@ export async function canonicalCommit(cwd, commit) {
   if (typeof commit !== 'string' || !/^[a-f0-9]{7,64}$/i.test(commit)) throw new Error('Invalid commit ID for review replies');
   return (await execute(['git', 'rev-parse', '--verify', `${commit}^{commit}`], { cwd })).trim();
 }
-export async function runWorkflow(args, { agent: invoke = runAgent, reviewer = review, enforce = true } = {}) {
+function quotaTracked(invoke, args) {
+  return async request => {
+    try { return await invoke(request); }
+    catch (error) {
+      if (error.code === 'CYCLER_QUOTA_HOLD' && args.statePath) patchState(args.statePath, {
+        quotaHold: { reason: error.message, resetsAt: error.resetsAt ?? null, stage: request.label || 'agent', checkedAt: Date.now() },
+      });
+      throw error;
+    }
+  };
+}
+export async function runWorkflow(args, { agent: rawInvoke = runAgent, reviewer = review, enforce = true } = {}) {
+  const invoke = quotaTracked(rawInvoke, args);
   const config = args.config || readConfig();
   const threadArgs = { ...args, config };
   const checkSummaries = [];
@@ -141,11 +153,12 @@ export async function runWorkflow(args, { agent: invoke = runAgent, reviewer = r
   return result;
 }
 export async function runSkill({ workflow, task, issueId, cwd, runtime, config = readConfig(), ...options }) {
+  const invoke = quotaTracked(runAgent, options);
   const name = String(workflow || 'workflow-feature').replace(/^\/?(?:cycler:)?/, '').replace(/^\$/, '');
   if (!['workflow-feature', 'workflow-bug', 'workflow-research', 'workflow-intake', 'workflow-review'].includes(name)) throw new Error(`Unsupported workflow: ${workflow}`);
   runtime = runtimeName(config, runtime);
   if (name === 'workflow-review') return review({ cwd, pr: task, config, runtime, publish: true,
-    agent: request => runAgent({ ...request, ...threadOptions({ ...options, issueId, config }, reviewLabel(request)) }) });
+    agent: request => invoke({ ...request, ...threadOptions({ ...options, issueId, config }, reviewLabel(request)) }) });
   if (name === 'workflow-feature' || name === 'workflow-bug') {
     issueId ||= typeof task === 'string' && (/^\s*([A-Z][A-Z0-9]*-\d+)\s*$/i.exec(task)?.[1] || /https?:\/\/linear\.app\/[^/]+\/issue\/([A-Z][A-Z0-9]*-\d+)/i.exec(task)?.[1]);
     if (issueId && !options.contractPath) {
@@ -156,7 +169,7 @@ export async function runSkill({ workflow, task, issueId, cwd, runtime, config =
     if (name === 'workflow-bug') task = `FIX MODE: read ${ROOT}/harness/modes/fix.md; regression test before implementation.\n${task}`;
     return runWorkflow({ ...options, task, issueId, cwd, runtime, config });
   }
-  const text = await runAgent({ runtime, config, cwd,
+  const text = await invoke({ runtime, config, cwd,
     prompt: `Follow ${ROOT}/skills/${name}/SKILL.md. CYCLER_ROOT=${ROOT}; CLAUDE_PLUGIN_ROOT is the same compatibility alias. Use available tools; no Claude-only ToolSearch or Workflow calls. Request: ${task}`,
     ...threadOptions({ ...options, issueId, config }, name) });
   return { status: 'done', workflow: name, summary: text };

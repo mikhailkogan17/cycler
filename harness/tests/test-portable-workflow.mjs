@@ -102,6 +102,25 @@ try {
     start: async request => { continuation = request.continuation; return { statePath: workerPath, pid: 99998, runtime: 'codex' }; },
   });
   assert.equal(continuation.workflowThreadId, 'workflow-thread', 'human PR feedback continues the same workflow chat');
+  const quotaState = join(dir, 'quota.json'); save(quotaState, { status: 'running' });
+  const held = await runWorkflow({ cwd: dir, task: 'test', runtime: 'codex', config: {}, statePath: quotaState, noCommit: true }, {
+    enforce: false, agent: async () => { throw Object.assign(new Error('Codex quota hold: primary reserve'), { code: 'CYCLER_QUOTA_HOLD', resetsAt: 9000 }); },
+  });
+  assert.equal(held.status, 'blocked');
+  const quota = JSON.parse(readFileSync(quotaState, 'utf8')).quotaHold;
+  assert.equal(quota.stage, 'contract'); assert.equal(quota.resetsAt, 9000);
+  const reviewQuotaState = join(dir, 'review-quota.json'); save(reviewQuotaState, { status: 'running' });
+  const reviewQuotaResponse = makeResponder({ auditDirty: [false], verifyGreen: [true], reviewApproved: [true] });
+  const reviewHeld = await runWorkflow({ cwd: dir, task: 'test', runtime: 'codex', config: {}, statePath: reviewQuotaState }, {
+    enforce: false, agent: async req => {
+      if (req.label?.startsWith('github-review:')) throw Object.assign(new Error('Codex quota hold: weekly reserve'), { code: 'CYCLER_QUOTA_HOLD', resetsAt: 10000 });
+      return reviewQuotaResponse(req.label, req.prompt, {}, []);
+    },
+    reviewer: async ({ agent }) => { await agent({ runtime: 'codex', cwd: dir, prompt: 'Review. Lens: bugs.' }); },
+  });
+  assert.equal(reviewHeld.status, 'blocked');
+  const reviewQuota = JSON.parse(readFileSync(reviewQuotaState, 'utf8')).quotaHold;
+  assert.equal(reviewQuota.stage, 'github-review:bugs'); assert.equal(reviewQuota.resetsAt, 10000);
   const reviewed = makeResponder({ auditDirty: [false], verifyGreen: [true], reviewApproved: [true] });
   const blockedReview = await runWorkflow({ cwd: dir, task: 'test', issueId: 'TEST-1', runtime: 'codex', config: {}, statePath }, {
     enforce: false,
