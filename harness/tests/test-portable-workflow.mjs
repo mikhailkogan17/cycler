@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { run } from './sim.mjs';
 import { makeResponder } from './stubs.mjs';
-import { runWorkflow, save, patchState } from '../../workflows/run.mjs';
+import { runWorkflow, save, patchState, canonicalCommit } from '../../workflows/run.mjs';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 let reviews = 0, replies = 0;
@@ -33,6 +34,15 @@ assert.equal(portable.status, 'done');
 assert(seen.some(r => r.label === 'verify-gate'), 'the real portable runner must reach verification');
 const dir = mkdtempSync(join(tmpdir(), 'cycler-thread-state-'));
 try {
+  const git = args => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
+  git(['init', '-q']);
+  git(['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-qm', 'test']);
+  const fullCommit = git(['rev-parse', 'HEAD']);
+  assert.equal(await canonicalCommit(dir, fullCommit.slice(0, 8)), fullCommit);
+  assert.equal(await canonicalCommit(dir, fullCommit), fullCommit);
+  await assert.rejects(canonicalCommit(dir, 'HEAD'), /Invalid commit/);
+  await assert.rejects(canonicalCommit(dir, '--help'), /Invalid commit/);
+  await assert.rejects(canonicalCommit(dir, '0'.repeat(40)), /failed/);
   const statePath = join(dir, 'state.json');
   save(statePath, { status: 'running' });
   const staged = makeResponder({ auditDirty: [false], verifyGreen: [true], reviewApproved: [true] });

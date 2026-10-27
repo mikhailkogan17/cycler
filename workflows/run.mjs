@@ -27,6 +27,10 @@ function threadOptions(args, label) {
     } };
 }
 const reviewLabel = request => `github-review:${/Lens: ([\w-]+)/.exec(request.prompt)?.[1] || 'verify-blocker'}`;
+export async function canonicalCommit(cwd, commit) {
+  if (typeof commit !== 'string' || !/^[a-f0-9]{7,64}$/i.test(commit)) throw new Error('Invalid commit ID for review replies');
+  return (await execute(['git', 'rev-parse', '--verify', `${commit}^{commit}`], { cwd })).trim();
+}
 export async function runWorkflow(args, { agent: invoke = runAgent, reviewer = review, enforce = true } = {}) {
   const config = args.config || readConfig();
   const runtime = runtimeName(config, args.runtime);
@@ -48,7 +52,8 @@ export async function runWorkflow(args, { agent: invoke = runAgent, reviewer = r
     const route = stageRoute(config, opts.label || '', runtime, opts.model);
     if (opts.replyRequest) {
       try {
-        const { pr, commit, threads } = opts.replyRequest;
+        const { pr, threads } = opts.replyRequest;
+        const commit = await canonicalCommit(opts.cwd || cwd, opts.replyRequest.commit);
         const schema = { type: 'object', required: ['replies'], properties: { replies: { type: 'array', items: {
           type: 'object', required: ['id', 'body'], properties: { id: { type: 'integer' }, body: { type: 'string' } }
         } } } };
