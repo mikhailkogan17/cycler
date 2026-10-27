@@ -54,7 +54,7 @@ try {
   assert.equal(start.approvalsReviewer, 'auto_review');
   assert.equal(start.ephemeral, false);
   assert.equal(ok.calls.find(x => x.method === 'thread/name/set').params.name, 'APL-147 · implementer');
-  assert.deepEqual(ok.calls.find(x => x.method === 'turn/start').params.outputSchema, schema);
+  assert.equal(ok.calls.find(x => x.method === 'turn/start').params.outputSchema, undefined, 'workflow schemas are validated locally, not sent as incompatible strict output schemas');
   assert.equal(ok.threads[0].id, 'thread-1');
   assert.equal(ok.threads[0].source, 'vscode');
   assert.equal(ok.threads[0].model, 'test-model');
