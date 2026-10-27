@@ -25,6 +25,17 @@ PreToolUse hooks are not installed into Codex/dsh: runtime permission policies s
 5. Invoke `$cycler-workflow-feature` in Codex, or the shared skill in dsh. Claude retains
    `/cycler:workflow-feature`. Start/stop/delegate/doctor also have shared skill wrappers.
 
+For desktop-visible Codex work, set `runtimes.codex.transport: app-server`. Stage threads use names
+such as `Cycler APL-147 · implementer`; `jobs/<id>/state.json` retains their IDs in `codexThreads`,
+including after failure. The legacy `exec` adapter remains available but its non-interactive sessions
+are excluded from the usual interactive history list. `codex resume --all --include-non-interactive`
+can inspect those older sessions.
+
+Git keeps `.git` read-only inside the ordinary workspace-write sandbox. Unattended Git stages need
+an explicit approval route: `runtimes.codex.approvals: auto-review` asks Codex's own reviewer to judge
+each escalation. The default `deny` will report blocked Git operations rather than disable isolation.
+Get authorization for this setting before enabling it. No client-side blanket approval is implemented.
+
 The portable entry point is an internal helper used by skills and the poller:
 
 ```sh
@@ -86,6 +97,23 @@ review. Fix rounds publish implementer replies to the original threads, citing t
 and verification, then review the new head. No merging or automatic thread resolution.
 
 ## Verification limits
+
+### Codex desktop transport assertions
+
+The optional `runtimes.codex.transport: app-server` adapter uses the official local stdio protocol,
+not a listener or a modification of Codex's state database. Each Codex agent stage gets a fresh,
+named persistent thread; its ID, model and working directory are recorded in the managed worker state. A completed
+worker must retain those thread records so a failure remains inspectable in desktop.
+
+`runtimes.codex.approvals: auto-review` routes requests through Codex's approval reviewer with an
+`on-request` policy and a `workspace-write` sandbox. It never grants requests by replying "accept"
+from cycler. The default `deny` policy permits no escalation. Read-only review always uses `deny`
+and `read-only`, regardless of the write-stage setting. An unhandled approval request, failed turn,
+interrupted turn, missing final answer or invalid structured result is a failure.
+
+These are checked against a real fake-server process in `test-codex-app-server.mjs`. The live check
+must additionally prove desktop visibility and successful Git worktree creation; a passing model-free
+protocol test does not establish either.
 
 The deterministic suite uses fake CLIs and GitHub responses, including failure cases. A successful
 mock test does not prove a live model completed the issue-to-PR loop. Live execution needs each

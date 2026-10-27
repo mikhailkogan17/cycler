@@ -85,6 +85,11 @@ Set `runtimes.<runtime>.bin` to the absolute installed executable. Verify `codex
 `dsh --profile headless --help`; authenticate using that CLI. For dsh see
 `docs/specs/005-runtimes.md` for headless credentials and Cordis model patches.
 Remove a Claude-specific `dispatch.command` when selecting a managed runtime.
+For desktop-visible Codex sessions select `runtimes.codex.transport: app-server`. Obtain explicit
+authorization before setting `runtimes.codex.approvals: auto-review`: this routes individual sandbox
+and network escalations to Codex's reviewer while keeping workspace-write isolation. The default
+`deny` cannot perform Git writes protected by the sandbox. Do not insert `--approve-for-me` into
+app-server args; use the approvals setting. Verify one actual Branch stage before releasing a queue.
 Skip the native workflow copy and PreToolUse hook installation below for Codex/dsh:
 the portable runner executes the source workflow and runs audit/gate before commit.
 Continue at step 6, then install the same outbound launchd poller. `CLAUDE_BIN` in the launchd
