@@ -16,7 +16,9 @@
 #    reported DIRTY on the very files the contract allowed. Moving the paragraph made the identical
 #    tree CLEAN, so the check was punishing the author for explaining themselves.
 #
-# 2. Read a declaration and any contiguous comma/and-separated path list. Stop at
+# 2. Read a declaration and a contiguous path list separated by comma, semicolon,
+# slash, plus, and/or. Articles and new/modified/existing/deleted labels are allowed.
+# Stop at
 # explanatory prose, so "`src/a.ts` — replaces `oldThing()`" declares only a.ts.
 # Labels before the first token are supported; prose references are never declarations.
 #
@@ -33,7 +35,9 @@ contract_section() {
         while (match(rest, /`[^`]+`/)) {
           connector = substr(rest, 1, RSTART - 1)
           gsub(/[[:space:]]/, "", connector)
-          if (!first && connector != "," && connector != "and" && connector != ",and" && connector != "or" && connector != ",or" && connector != "andthenew" && connector != ",andthenew") break
+          connector = tolower(connector)
+          gsub(/\((new|modified|existing|deleted)\)/, "", connector)
+          if (!first && connector !~ /^([,;+\/]|and|or)(and|or)?(a|an|the)?(new|modified|existing|deleted)?$/) break
           print substr(rest, RSTART + 1, RLENGTH - 2)
           rest = substr(rest, RSTART + RLENGTH); first = 0
         }
