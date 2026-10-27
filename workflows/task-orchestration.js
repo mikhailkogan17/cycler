@@ -1031,14 +1031,24 @@ Repo working dir: ${runCwd} — cd there FIRST. Task contract: ${contract} (READ
 It prints one line per check and a final 'GATE: PASS|FAIL (n of m)'. Do NOT second-guess it, do NOT
 re-run its checks by hand, and do NOT plan a gate of your own. Whatever this repo lints, builds and
 tests with, the gate already covers it — correctly invoked, and scoped to this task's changed files.
-Report ONE entry in 'checks' per 'CHECK <name> ...' line it prints, using its PASS/FAIL verdict.
-If a check failed, re-run just that one with '--only <name>' to capture more output for the blocker.
+If the gate fails specifically because sandbox restrictions deny filesystem, network or command execution,
+request a command-scoped require_escalated retry of the SAME full gate once. Codex auto-review must
+approve it; do not bypass a rejection. Record both attempts in report, then report ONE entry per CHECK
+line from the final completed gate attempt. An initial sandbox denial is not a product regression.
+For an ordinary code/test failure, re-run just that check with '--only <name>' to capture blocker output;
+this diagnostic rerun does not override a failed full gate.
 
 ## Step 2 — the contract's own acceptance commands
 
 Read the contract's "Acceptance checks" section. Run any that are concrete shell commands NOT already
 covered by step 1 (task-specific greps, node -e structural checks, a scoped test file, and so on).
-Issue them as PARALLEL tool calls in one message. Add one 'checks' entry per command.
+Issue independent commands as PARALLEL tool calls in one message. Add one 'checks' entry per command.
+When acceptance expects a nonzero exit (e.g. an unknown profile), run an explicit shell assertion:
+execute the command, capture its status/output, and exit 0 ONLY when the expected failure is observed.
+A sandbox/tool/import failure does NOT satisfy a negative test. Require the intended error as well as
+its expected exit status. Report the exact assertion command and captured exit/error as evidence.
+For a sandbox denial, request one command-scoped reviewed escalation and use its final result while
+recording the initial denied attempt. Do not retry an ordinary code/test failure to make it green.
 
 ${verifySteps}
 ## Rules
