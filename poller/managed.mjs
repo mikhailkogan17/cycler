@@ -78,7 +78,8 @@ export async function managedPoll({ dir, issues, runtime, cwd, config, workflowF
         ];
         if (!links.length) continue;
         const next = await start({ dir, issue, workflow: '/cycler:workflow-feature', runtime: rec.runtime, cwd, env,
-          continuation: { contractPath: prior.contractPath, branch: prior.branch, feedback: [followupPrompt(issue.identifier, pr.number, links)] } });
+          continuation: { contractPath: prior.contractPath, branch: prior.branch, workflowThreadId: state?.workflowThreadId,
+            feedback: [followupPrompt(issue.identifier, pr.number, links)] } });
         registry[issue.id] = { ...next, identifier: issue.identifier, attempts: rec.attempts, seenAt: Date.now(), priorResult: prior };
         write(registryPath, registry); running++;
         await announce(issue.id, `Continued ${rec.runtime} workflow for new feedback on the same PR: ${pr.url}`);

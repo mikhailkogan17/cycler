@@ -96,6 +96,8 @@ runtimes:
     bin: codex
     # app-server creates named desktop-visible sessions. Omit for legacy exec sessions.
     transport: app-server
+    # One visible task chat. Independent checks stay fresh and ephemeral.
+    thread_mode: workflow
     # deny (default) cannot escalate out of the sandbox. For unattended Git operations,
     # explicitly authorize auto-review: Codex reviews each request; cycler never accepts it.
     approvals: deny

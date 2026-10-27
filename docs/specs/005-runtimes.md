@@ -25,9 +25,15 @@ PreToolUse hooks are not installed into Codex/dsh: runtime permission policies s
 5. Invoke `$cycler-workflow-feature` in Codex, or the shared skill in dsh. Claude retains
    `/cycler:workflow-feature`. Start/stop/delegate/doctor also have shared skill wrappers.
 
-For desktop-visible Codex work, set `runtimes.codex.transport: app-server`. Stage threads use names
-such as `Cycler APL-147 · implementer`; `jobs/<id>/state.json` retains their IDs in `codexThreads`,
-including after failure. The legacy `exec` adapter remains available but its non-interactive sessions
+For desktop-visible Codex work, set `runtimes.codex.transport: app-server` and
+`runtimes.codex.thread_mode: workflow`. Ordinary stages resume one named chat (`Cycler APL-147`),
+including when they move into the task worktree. Audit, verification and independent reviewers use
+fresh ephemeral contexts, so they do not inherit implementation history or create sidebar entries.
+Their compact results appear in subsequent workflow turns and the final status turn, including on
+blocked runs. No-write runs also receive a final status turn. `state.json` retains `workflowThreadId`
+and per-session stage history in `codexThreads`; managed PR-feedback continuations reuse that thread.
+`thread_mode: stage` preserves the older separate stage chats. Existing stage chats are not merged
+or deleted automatically. The legacy `exec` adapter remains available but its non-interactive sessions
 are excluded from the usual interactive history list. `codex resume --all --include-non-interactive`
 can inspect those older sessions.
 

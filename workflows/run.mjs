@@ -18,12 +18,24 @@ export function patchState(path, data) {
   save(path, { ...previous, ...data });
 }
 function threadOptions(args, label) {
-  return { label, threadName: `Cycler ${args.issueId || 'workflow'} · ${label || 'agent'}`,
+  const mode = get(args.config || {}, 'runtimes.codex.thread_mode') || 'stage';
+  if (!['stage', 'workflow'].includes(mode)) throw new Error(`Invalid Codex thread_mode: ${mode}`);
+  const isolated = /^(audit:|verify-|github-review:|review:|refute:|synthesis|review-replies)/.test(label || '');
+  const shared = mode === 'workflow' && !isolated;
+  const saved = args.statePath && existsSync(args.statePath) ? JSON.parse(readFileSync(args.statePath, 'utf8')) : {};
+  return { label, threadName: shared ? `Cycler ${args.issueId || 'workflow'}` : `Cycler ${args.issueId || 'workflow'} · ${label || 'agent'}`,
+    threadId: shared ? args.workflowThreadId || saved.workflowThreadId : undefined,
+    ephemeral: mode === 'workflow' && isolated,
     onThread: thread => {
-      console.error(`Codex chat: ${thread.id} (${thread.name})`);
+      if (shared) args.workflowThreadId = thread.id;
+      console.error(`Codex ${thread.ephemeral ? 'isolated check' : 'chat'}: ${thread.id} (${thread.name})`);
       if (!args.statePath) return;
       const previous = JSON.parse(readFileSync(args.statePath, 'utf8'));
-      patchState(args.statePath, { stage: label, codexThreads: [...(previous.codexThreads || []), { ...thread, stage: label }] });
+      const entries = previous.codexThreads || [];
+      const prior = entries.find(t => t.id === thread.id);
+      patchState(args.statePath, { stage: label, ...(shared ? { workflowThreadId: thread.id } : {}),
+        codexThreads: [...entries.filter(t => t.id !== thread.id), { ...thread, stage: label,
+          stages: [...(prior?.stages || []), label] }] });
     } };
 }
 const reviewLabel = request => `github-review:${/Lens: ([\w-]+)/.exec(request.prompt)?.[1] || 'verify-blocker'}`;
@@ -33,6 +45,8 @@ export async function canonicalCommit(cwd, commit) {
 }
 export async function runWorkflow(args, { agent: invoke = runAgent, reviewer = review, enforce = true } = {}) {
   const config = args.config || readConfig();
+  const threadArgs = { ...args, config };
+  const checkSummaries = [];
   const runtime = runtimeName(config, args.runtime);
   const cwd = expand(args.cwd || get(config, 'repo.path') || process.cwd());
   const resolved = { ...args, ...(args.contractPath ? { contractPath: resolve(cwd, args.contractPath) } : {}), cwd, config, runtime, pluginRoot: ROOT, githubReview: args.githubReview !== false,
@@ -45,9 +59,18 @@ export async function runWorkflow(args, { agent: invoke = runAgent, reviewer = r
     console.error(`cycler stage: ${opts.label}`);
     if (args.statePath) patchState(args.statePath, { stage: opts.label });
     if (opts.reviewRequest) {
-      try { return await reviewer({ ...opts.reviewRequest, config, publish: true,
-        agent: request => invoke({ ...request, ...threadOptions(args, reviewLabel(request)) }) }); }
-      catch (err) { return { approved: false, fatal: true, fatalReason: err.message }; }
+      try {
+        const result = await reviewer({ ...opts.reviewRequest, config, publish: true,
+          agent: request => invoke({ ...request, ...threadOptions(threadArgs, reviewLabel(request)) }) });
+        checkSummaries.push({ stage: opts.label, approved: result.approved, published: result.published,
+          head: result.head, fatal: result.fatal, fatalReason: result.fatalReason, blockingIssues: result.blockingIssues,
+          findings: result.confirmed?.map(f => ({ severity: f.severity, title: f.title })) });
+        return result;
+      }
+      catch (err) {
+        checkSummaries.push({ stage: opts.label, approved: false, fatal: true, fatalReason: err.message });
+        return { approved: false, fatal: true, fatalReason: err.message };
+      }
     }
     const route = stageRoute(config, opts.label || '', runtime, opts.model);
     if (opts.replyRequest) {
@@ -58,13 +81,17 @@ export async function runWorkflow(args, { agent: invoke = runAgent, reviewer = r
           type: 'object', required: ['id', 'body'], properties: { id: { type: 'integer' }, body: { type: 'string' } }
         } } } };
         const drafted = await invoke({ ...route, config, cwd: opts.cwd || cwd, schema, readOnly: true,
-          prompt: `You are the implementer replying to these GitHub threads: ${JSON.stringify(threads)}. Inspect the actual code and commit ${commit}. Explain the verified fix and tests, or an evidence-based disagreement/deferral. Do not publish; return one reply per root thread.`, ...threadOptions(args, opts.label) });
+          prompt: `You are the implementer replying to these GitHub threads: ${JSON.stringify(threads)}. Inspect the actual code and commit ${commit}. Explain the verified fix and tests, or an evidence-based disagreement/deferral. Do not publish; return one reply per root thread.`, ...threadOptions(threadArgs, opts.label) });
         if (!drafted?.replies || drafted.replies.length !== threads.length || new Set(drafted.replies.map(r => r.id)).size !== threads.length
           || threads.some(t => !drafted.replies.some(r => r.id === t.id))) throw new Error('Implementer did not answer every thread');
         const api = github(opts.cwd || cwd);
         await publishReplies({ api, pr: api.pr(pr), commit, replies: drafted.replies });
+        checkSummaries.push({ stage: opts.label, replied: true, commit });
         return { replied: true };
-      } catch (err) { console.error(`Replies failed: ${err.message}`); return { replied: false }; }
+      } catch (err) {
+        checkSummaries.push({ stage: opts.label, replied: false, error: err.message });
+        console.error(`Replies failed: ${err.message}`); return { replied: false };
+      }
     }
 
     try {
@@ -76,8 +103,14 @@ export async function runWorkflow(args, { agent: invoke = runAgent, reviewer = r
         await execute(['bash', join(ROOT, 'harness/audit.sh'), '--base', resolved.prBase], { cwd: opts.cwd || cwd, env });
         await execute(['bash', join(ROOT, 'harness/gate.sh'), '--fast', '--base', resolved.prBase], { cwd: opts.cwd || cwd, env });
       }
-      const result = await invoke({ ...route, config, cwd: opts.cwd || cwd, prompt, schema: opts.schema, label: opts.label,
-        ...threadOptions(args, opts.label) });
+      const session = threadOptions(threadArgs, opts.label);
+      const grouped = get(config, 'runtimes.codex.thread_mode') === 'workflow';
+      const stagePrompt = grouped && !session.ephemeral
+        ? `Workflow stage: ${opts.label}. Follow the current stage instructions below.\nIndependent check results (controller summary): ${JSON.stringify(checkSummaries)}\n\n${prompt}` : prompt;
+      const result = await invoke({ ...route, config, cwd: opts.cwd || cwd, prompt: stagePrompt, schema: opts.schema, label: opts.label,
+        ...session });
+      if (grouped && session.ephemeral) checkSummaries.push({ stage: opts.label, clean: result?.clean,
+        checks: result?.checks?.map(c => ({ name: c.name, passed: c.passed })), blockers: result?.blockers });
       if (result?.contractPath) {
         result.contractPath = resolve(cwd, result.contractPath); contract = result.contractPath;
         if (enforce) { if (!existsSync(contract)) throw new Error(`Contract missing: ${contract}`); assertContract = protect([contract]); }
@@ -93,16 +126,26 @@ export async function runWorkflow(args, { agent: invoke = runAgent, reviewer = r
   };
   const src = readFileSync(join(ROOT, 'workflows/task-orchestration.js'), 'utf8').replace(/^export const meta/m, 'const meta');
   const fn = new (Object.getPrototypeOf(async function () {}).constructor)('args', 'agent', 'parallel', 'pipeline', 'phase', 'log', 'budget', src);
-  return fn(resolved, agent, tasks => Promise.all(tasks.map(t => t())),
+  const result = await fn(resolved, agent, tasks => Promise.all(tasks.map(t => t())),
     (items, ...stages) => Promise.all(items.map(async (item, i) => { let v = item; for (const stage of stages) v = await stage(v, item, i); return v; })),
     phase => console.error(`cycler phase: ${phase}`), msg => console.error(msg), { total: null, remaining: () => Infinity });
+  if (runtime === 'codex' && get(config, 'runtimes.codex.thread_mode') === 'workflow' && threadArgs.workflowThreadId) {
+    try {
+      await invoke({ ...stageRoute(config, 'workflow-summary', runtime), config, cwd, readOnly: true,
+        ...threadOptions(threadArgs, 'workflow-summary'),
+        prompt: `Workflow finished. Do not use tools or perform more work. Give a concise final status using only this controller report: ${JSON.stringify({
+          status: result.status, stage: result.stage, blockedReason: result.blockedReason, pr: result.pr, checks: checkSummaries,
+        })}` });
+    } catch (error) { result.workflowChatError = error.message; console.error(`Workflow chat summary failed: ${error.message}`); }
+  }
+  return result;
 }
 export async function runSkill({ workflow, task, issueId, cwd, runtime, config = readConfig(), ...options }) {
   const name = String(workflow || 'workflow-feature').replace(/^\/?(?:cycler:)?/, '').replace(/^\$/, '');
   if (!['workflow-feature', 'workflow-bug', 'workflow-research', 'workflow-intake', 'workflow-review'].includes(name)) throw new Error(`Unsupported workflow: ${workflow}`);
   runtime = runtimeName(config, runtime);
   if (name === 'workflow-review') return review({ cwd, pr: task, config, runtime, publish: true,
-    agent: request => runAgent({ ...request, ...threadOptions({ ...options, issueId }, reviewLabel(request)) }) });
+    agent: request => runAgent({ ...request, ...threadOptions({ ...options, issueId, config }, reviewLabel(request)) }) });
   if (name === 'workflow-feature' || name === 'workflow-bug') {
     issueId ||= typeof task === 'string' && (/^\s*([A-Z][A-Z0-9]*-\d+)\s*$/i.exec(task)?.[1] || /https?:\/\/linear\.app\/[^/]+\/issue\/([A-Z][A-Z0-9]*-\d+)/i.exec(task)?.[1]);
     if (issueId && !options.contractPath) {
@@ -115,7 +158,7 @@ export async function runSkill({ workflow, task, issueId, cwd, runtime, config =
   }
   const text = await runAgent({ runtime, config, cwd,
     prompt: `Follow ${ROOT}/skills/${name}/SKILL.md. CYCLER_ROOT=${ROOT}; CLAUDE_PLUGIN_ROOT is the same compatibility alias. Use available tools; no Claude-only ToolSearch or Workflow calls. Request: ${task}`,
-    ...threadOptions({ ...options, issueId }, name) });
+    ...threadOptions({ ...options, issueId, config }, name) });
   return { status: 'done', workflow: name, summary: text };
 }
 export async function syncLinear(result, cwd) {
