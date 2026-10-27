@@ -37,6 +37,11 @@ or deleted automatically. The legacy `exec` adapter remains available but its no
 are excluded from the usual interactive history list. `codex resume --all --include-non-interactive`
 can inspect those older sessions.
 
+Claude schema-bearing requests use the CLI's native `--output-format json --json-schema` mode.
+The adapter validates `structured_output`, rather than parsing the human-facing `result` prose.
+Provider errors, missing structured output and invalid values fail closed without a blind paid retry.
+Plain-text Claude requests retain text mode.
+
 Git keeps `.git` read-only inside the ordinary workspace-write sandbox. Unattended Git stages need
 an explicit approval route: `runtimes.codex.approvals: auto-review` asks Codex's own reviewer to judge
 each escalation. The default `deny` will report blocked Git operations rather than disable isolation.
