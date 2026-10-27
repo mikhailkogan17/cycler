@@ -21,7 +21,7 @@ try {
   assert.deepEqual(stageRoute({ review: { runtime: 'dsh', lenses: { bugs: { runtime: 'codex', model: 'test-model' } } } }, 'review:bugs', 'claude', 'haiku'), { runtime: 'codex', model: 'test-model' });
   assert.equal(stageRoute({}, 'contract', 'codex', 'opus').model, undefined);
   const fake = join(temp, 'fake-cli.mjs');
-  writeFileSync(fake, '#!/usr/bin/env node\nimport { writeFileSync } from "node:fs"; const a=process.argv.slice(2); const value=JSON.stringify({ok:true}); const i=a.indexOf("--output-last-message"); if(i>=0)writeFileSync(a[i+1],value);else if(a.includes("--json"))console.log(JSON.stringify({type:"final",text:value}));else console.log(value);\n', { mode: 0o755 });
+  writeFileSync(fake, '#!/usr/bin/env node\nimport { writeFileSync } from "node:fs"; const a=process.argv.slice(2); const value=JSON.stringify({ok:true}); const i=a.indexOf("--output-last-message"); if(i>=0)writeFileSync(a[i+1],value);else if(a.includes("--json-schema"))console.log(JSON.stringify({type:"result",subtype:"success",is_error:false,result:"I reported the result.",structured_output:{ok:true}}));else if(a.includes("--json"))console.log(JSON.stringify({type:"final",text:value}));else console.log(value);\n', { mode: 0o755 });
   const protectedFile = join(temp, 'contract.md');
   writeFileSync(protectedFile, 'original');
   const guard = protect([protectedFile]); guard();
@@ -31,6 +31,23 @@ try {
   const schema = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' } } };
   for (const runtime of ['claude', 'codex', 'dsh']) {
     assert.deepEqual(await runAgent({ runtime, config: { runtimes: { [runtime]: { bin: fake } } }, cwd: temp, prompt: evil, schema }), { ok: true });
+  }
+  const claudeArgs = invocation({ runtime: 'claude', cwd: temp, prompt: 'review', schema });
+  assert.equal(claudeArgs[claudeArgs.indexOf('--output-format') + 1], 'json');
+  assert.deepEqual(JSON.parse(claudeArgs[claudeArgs.indexOf('--json-schema') + 1]), schema);
+  const plainClaude = invocation({ runtime: 'claude', prompt: 'plain' });
+  assert.equal(plainClaude[plainClaude.indexOf('--output-format') + 1], 'text');
+  assert(!plainClaude.includes('--json-schema'));
+  for (const envelope of [
+    { subtype: 'success', result: 'I reported a finding' },
+    { subtype: 'error_max_turns', structured_output: { ok: true } },
+    { is_error: true, structured_output: { ok: true } },
+    { subtype: 'success', structured_output: { ok: 'yes' } },
+  ]) {
+    let attempts = 0;
+    await assert.rejects(runAgent({ runtime: 'claude', cwd: temp, prompt: 'review', schema,
+      run: async () => { attempts++; return JSON.stringify(envelope); } }));
+    assert.equal(attempts, 1, 'provider failures and invalid output do not trigger paid blind retries');
   }
   const calls = [];
   const session = 'session-11111111-1111-4111-8111-111111111111';
