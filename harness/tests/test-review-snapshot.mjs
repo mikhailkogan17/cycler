@@ -29,5 +29,32 @@ try {
   assert.equal(result.approved, true); assert.equal(dirs.length, 3);
   assert(!existsSync(dirs[0])); assert.equal(readFileSync(join(repo, 'x.js'), 'utf8'), 'local work\n');
   assert.equal(git(repo, 'worktree', 'list', '--porcelain').match(/^worktree /gm).length, 1);
+  const largeFiles = Array.from({ length: 80 }, (_, index) => ({
+    filename: index === 0 ? '../../untrusted-name.js' : `removed/${index}.js`,
+    changes: 100, status: 'removed', additions: 0, deletions: 100,
+    patch: `@@ -1,100 +0,0 @@\n${'-deleted source\n'.repeat(100)}${index}`,
+  }));
+  const largeApi = { ...api, list: () => largeFiles };
+  const largeDirs = [];
+  await review({ cwd: repo, pr: pr.url, api: largeApi, agent: async req => {
+    largeDirs.push(req.cwd);
+    assert(Buffer.byteLength(req.prompt) < 10000);
+    const bundle = JSON.parse(req.prompt.match(/local bundle ("[^\n]+")\./)[1]);
+    assert(bundle.startsWith(req.cwd + '/.cycler-review-input-'));
+    const manifest = readFileSync(join(bundle, 'manifest.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+    assert.equal(manifest.length, largeFiles.length);
+    manifest.forEach((entry, index) => {
+      assert.equal(entry.filename, largeFiles[index].filename);
+      assert.equal(readFileSync(join(bundle, entry.patch), 'utf8'), largeFiles[index].patch);
+    });
+    assert.match(readFileSync(join(bundle, 'contract.md'), 'utf8'), /replace old/);
+    return { findings: [] };
+  } });
+  assert.equal(largeDirs.length, 3); assert(!existsSync(largeDirs[0]));
+  await assert.rejects(review({ cwd: repo, pr: pr.url, api: largeApi, snapshot: false,
+    agent: async () => { throw Error('must not run'); } }), /requires an isolated snapshot/);
+  await assert.rejects(review({ cwd: repo, pr: pr.url, api: { ...largeApi,
+    list: () => [...largeFiles, { filename: 'missing', changes: 1 }] },
+    agent: async () => { throw Error('must not run'); } }), /truncated/);
   console.log('PASS real Git fetch, immutable review snapshot, cleanup and preservation of local edits');
 } finally { rmSync(temp, { recursive: true, force: true }); }
