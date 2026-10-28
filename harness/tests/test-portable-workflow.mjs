@@ -88,6 +88,8 @@ try {
   assert(groupedCalls.some(r => !r.ephemeral && r.prompt.includes('"stage":"verify-gate"')), 'independent check summaries stay inside workflow chat');
   const managedDir = join(dir, 'managed'); mkdirSync(managedDir);
   const workerPath = join(managedDir, 'worker.json');
+  save(join(managedDir, 'request.json'), { workflow: '/cycler:workflow-feature', task: 'Approved TEST-1 task',
+    executorModel: 'gpt-6-sol', models: { branch: 'gpt-6-luna' } });
   save(workerPath, { status: 'completed', workflowThreadId: 'workflow-thread', result: {
     status: 'done', contractPath: 'contract.md', branch: 'codex/TEST-1', pr: { prUrl: 'https://github.com/test/repo/pull/1' },
   } });
@@ -102,6 +104,8 @@ try {
     start: async request => { continuation = request.continuation; return { statePath: workerPath, pid: 99998, runtime: 'codex' }; },
   });
   assert.equal(continuation.workflowThreadId, 'workflow-thread', 'human PR feedback continues the same workflow chat');
+  assert.equal(continuation.executorModel, 'gpt-6-sol');
+  assert.deepEqual(continuation.models, { branch: 'gpt-6-luna' });
   const quotaState = join(dir, 'quota.json'); save(quotaState, { status: 'running' });
   const held = await runWorkflow({ cwd: dir, task: 'test', runtime: 'codex', config: {}, statePath: quotaState, noCommit: true }, {
     enforce: false, agent: async () => { throw Object.assign(new Error('Codex quota hold: primary reserve'), { code: 'CYCLER_QUOTA_HOLD', resetsAt: 9000 }); },
