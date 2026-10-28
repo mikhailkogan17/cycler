@@ -17,7 +17,7 @@
 #    tree CLEAN, so the check was punishing the author for explaining themselves.
 #
 # 2. Read a declaration and a contiguous path list separated by comma, semicolon,
-# slash, plus, and/or. Articles and new/modified/existing/deleted labels are allowed.
+# slash, plus, and/or. Articles, possessives and filesystem-role labels are allowed.
 # Stop at
 # explanatory prose, so "`src/a.ts` — replaces `oldThing()`" declares only a.ts.
 # Labels before the first token are supported; prose references are never declarations.
@@ -30,14 +30,26 @@ contract_section() {
   sed -n "/^## *$name/,/^## /p" "$file" \
     | grep -E '^ *[-*] ' \
     | awk '
+      function list_connector(text, has_separator) {
+        text = tolower(text)
+        gsub(/\((new|modified|existing|deleted)\)/, "", text)
+        gsub(/[[:space:]]+/, " ", text)
+        sub(/^ /, "", text); sub(/ $/, "", text)
+        has_separator = 0
+        if (text ~ /^[,;+\/]/) { sub(/^[,;+\/] */, "", text); has_separator = 1 }
+        if (text ~ /^(and|or)( |$)/) { sub(/^(and|or) */, "", text); has_separator = 1 }
+        if (!has_separator) return 0
+        sub(/^(a|an|the|its|their|our)( |$)/, "", text)
+        if (text ~ /^(new|modified|existing|deleted)?$/) return 1
+        # A label describes a filesystem role, not what code does. Verbs and explanatory
+        # phrases deliberately do not match, even if followed by a backticked path.
+        return text ~ /^((new|modified|existing|deleted|matching|corresponding|associated|related|unit|integration|regression|test|source|config|configuration|build|runtime|supporting) )*(files?|tests?|companions?|fixtures?|scripts?|modules?|configs?|configurations?|assets?|headers?|implementations?)$/
+      }
       {
         rest = $0; first = 1
         while (match(rest, /`[^`]+`/)) {
           connector = substr(rest, 1, RSTART - 1)
-          gsub(/[[:space:]]/, "", connector)
-          connector = tolower(connector)
-          gsub(/\((new|modified|existing|deleted)\)/, "", connector)
-          if (!first && connector !~ /^([,;+\/]|and|or)(and|or)?(a|an|the)?(new|modified|existing|deleted)?$/) break
+          if (!first && !list_connector(connector)) break
           print substr(rest, RSTART + 1, RLENGTH - 2)
           rest = substr(rest, RSTART + RLENGTH); first = 0
         }
