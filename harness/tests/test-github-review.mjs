@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { review, publishReview, publishReplies, assertLocations } from '../review.mjs';
+import { review, publishReview, publishReplies, assertLocations, anchorFindings } from '../review.mjs';
 const head = 'a'.repeat(40), next = 'b'.repeat(40);
 const pr = { number: 1, url: 'https://github.com/o/r/pull/1', state: 'OPEN', headRefOid: head, baseRefOid: 'c'.repeat(40), title: 'Fix', body: 'Acceptance' };
 const files = [{ filename: 'x.js', changes: 1, patch: '@@ -1,2 +1,2 @@\n before\n-old\n+new' }];
@@ -46,7 +46,7 @@ await assert.rejects(review({ cwd: '/tmp', pr: pr.url, agent: async request => {
   return { findings: [] };
 }, api, snapshot: false }), /reviewer failed/);
 assert.equal(finishedReviewers, 2, 'all concurrent reviewers finish before snapshot cleanup');
-await assert.rejects(review({ cwd: '/tmp', pr: pr.url, agent: async () => ({ findings: [{ ...finding, line: 99 }] }), api, snapshot: false }), /diff/);
+await assert.rejects(review({ cwd: '/tmp', pr: pr.url, agent: async () => ({ findings: [{ ...finding, line: 99 }] }), api, snapshot: false, source: () => 'one\ntwo\n' }), /anchor/);
 await assert.rejects(publishReview({ api: { ...api, list: e => e.endsWith('/files') ? files : [], api: () => { throw new Error('GitHub failed'); } }, pr, findings: [finding] }), /GitHub failed/);
 const deletedPosts = [];
 const deletionApi = { ...api, list: endpoint => endpoint.endsWith('/files') ? [deleted] : [],
@@ -70,6 +70,31 @@ const mixed = await review({ cwd: '/tmp', pr: pr.url, api, snapshot: false,
   agent: async request => request.schema.required.includes('isReal') ? { isReal: true, reasoning: 'Confirmed' }
     : { findings: request.prompt.includes('Lens: bugs.') ? [finding, { ...finding, side: 'LEFT' }] : [] } });
 assert.equal(mixed.confirmed.length, 2);
+const bodyPosts = [], bodyReviews = [];
+const bodyApi = { ...api, list: endpoint => endpoint.endsWith('/files') ? files : endpoint.endsWith('/reviews') ? bodyReviews : [],
+  api: (endpoint, body) => { bodyPosts.push({ endpoint, body }); bodyReviews.push(body); return {}; } };
+const fileFinding = { ...finding, line: 4, title: 'Unchanged caller breaks' };
+let fileRefuted = false;
+const bodyResult = await review({ cwd: '/tmp', pr: pr.url, api: bodyApi, snapshot: false, publish: true,
+  source: () => 'one\ntwo\nthree\nfour\n', agent: async request => {
+    if (request.schema.required.includes('isReal')) {
+      fileRefuted = true; assert.match(request.prompt, /"location":"file"/);
+      return { isReal: true, reasoning: 'Confirmed caller regression' };
+    }
+    return { findings: request.prompt.includes('Lens: bugs.') ? [fileFinding] : [] };
+  } });
+assert(fileRefuted); assert.equal(bodyResult.approved, false);
+assert.equal(bodyPosts[0].body.comments.length, 0);
+assert.match(bodyPosts[0].body.body, /File-level finding at "x.js":4/);
+assert.match(bodyPosts[0].body.body, /Confirmed caller regression/);
+assert.equal(bodyResult.confirmed[0].location, 'file');
+await publishReview({ api: bodyApi, pr, findings: bodyResult.confirmed, source: () => 'one\ntwo\nthree\nfour\n' });
+assert.equal(bodyPosts.length, 1, 'file-level publication is idempotent');
+await publishReview({ api: bodyApi, pr, findings: [...bodyResult.confirmed, finding], source: () => 'one\ntwo\nthree\nfour\n' });
+assert.equal(bodyPosts[1].body.comments.length, 1, 'only the valid hunk finding is inline');
+assert.equal(bodyPosts[1].body.comments[0].line, 2);
+assert.throws(() => anchorFindings([fileFinding], files), /unavailable/);
+assert.throws(() => anchorFindings([{ ...fileFinding, line: 0 }], files, () => 'x'), /Invalid/);
 comments = [{ id: 20, body: 'root' }]; current = next;
 await publishReplies({ api, pr, replies: [{ id: 20, body: 'Fixed bounds; regression test passes.' }], commit: next });
 assert(posts.at(-1).endpoint.endsWith('/comments/20/replies'));
