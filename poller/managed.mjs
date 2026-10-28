@@ -27,6 +27,21 @@ export async function launch({ dir, issue, workflow, runtime, cwd, env = process
     return { id, pid: child.pid, statePath, startedAt: Date.now(), runtime };
   } finally { closeSync(fd); }
 }
+// Replay only the workflow inputs, never the previous worker's ownership or config/secrets.
+function continuationFor(rec, state) {
+  const request = read(join(dirname(rec.statePath), 'request.json'), null);
+  if (!request || typeof request.workflow !== 'string' || typeof request.task !== 'string') return null;
+  const keys = ['task', 'issueId', 'contractPath', 'branch', 'executorModel', 'models', 'workflowThreadId',
+    'feedback', 'githubReview', 'prBase', 'branchPrefix', 'noCommit', 'linear', 'stopAtContract',
+    'stopOnOpenQuestions', 'fixMax', 'gateFixMax', 'reviewFixMax', 'worktree'];
+  const continuation = Object.fromEntries(keys.filter(key => key in request).map(key => [key, request[key]]));
+  if (state?.workflowThreadId) continuation.workflowThreadId = state.workflowThreadId;
+  return { workflow: request.workflow, continuation };
+}
+function safeToRetry(state) {
+  // A stage can mutate the worktree before producing a result. An exception is not proof of no work.
+  return state.status === 'failed' && !state.result && !state.fatal && !state.stage && !state.workflowThreadId && !state.quotaHold;
+}
 export async function managedPoll({ dir, issues, runtime, cwd, config, workflowFor, comment, isBlocked, env, log = console.log, start = launch, isAlive = alive, prFor }) {
   mkdirSync(dir, { recursive: true });
   const lock = join(dir, 'managed-poll.lock');
@@ -44,20 +59,25 @@ export async function managedPoll({ dir, issues, runtime, cwd, config, workflowF
     if (!Number.isInteger(max) || max < 0 || !Number.isInteger(attempts) || attempts < 1) throw new Error('Invalid dispatch concurrency/attempt limit');
     const problems = [];
     let running = 0;
+    const retries = new Map();
     const announce = async (id, text) => { try { await comment(id, text); return true; } catch (err) { problems.push(`comment failed: ${err.message}`); return false; } };
     for (const [issueId, rec] of Object.entries(registry)) {
       let state = read(rec.statePath, null);
       if (!state || ['starting', 'running'].includes(state.status)) {
         if (isAlive(rec.pid)) { running++; continue; }
-        state = { status: 'failed', error: 'Worker exited without a terminal result' };
+        state = { ...state, status: 'failed', error: 'Worker exited without a terminal result' };
       }
       if (state.status === 'completed') {
         if (!rec.announced) rec.announced = await announce(issueId, `${rec.runtime} workflow completed${state.result?.pr?.prUrl ? `: ${state.result.pr.prUrl}` : '.'}`);
       } else {
         problems.push(`${rec.identifier}: ${state.error || state.result?.blockedReason || 'workflow blocked'}`);
         if (!rec.announced) rec.announced = await announce(issueId, `⚠️ ${rec.runtime} workflow failed: ${state.error || state.result?.blockedReason || 'inspect worker.log'}. Attempt ${rec.attempts}/${attempts}.`);
-        // A completed but blocked workflow owns its worktree. Never restart implementation blindly.
-        if (!state.result && rec.attempts < attempts) processed.delete(issueId);
+        // Only a failure before workflow execution is automatically replayable. Keep all stage,
+        // fatal and quota evidence held for an explicit inspected continuation by the controller.
+        if (!rec.closed && safeToRetry(state) && rec.attempts < attempts) {
+          const request = continuationFor(rec, state);
+          if (request) { retries.set(issueId, request); processed.delete(issueId); }
+        }
       }
     }
     if (prFor) for (const issue of issues) {
@@ -77,8 +97,10 @@ export async function managedPoll({ dir, issues, runtime, cwd, config, workflowF
           ...(issue.comments?.nodes || []).filter(c => isHumanLinear(c, since)).map(c => `Linear feedback: ${c.body}`),
         ];
         if (!links.length) continue;
-        const next = await start({ dir, issue, workflow: '/cycler:workflow-feature', runtime: rec.runtime, cwd, env,
-          continuation: { contractPath: prior.contractPath, branch: prior.branch, workflowThreadId: state?.workflowThreadId,
+        const request = continuationFor(rec, state);
+        if (!request) throw new Error('Original workflow request missing; refusing to lose continuation context');
+        const next = await start({ dir, issue, workflow: request.workflow, runtime: rec.runtime, cwd, env,
+          continuation: { ...request.continuation, contractPath: prior.contractPath, branch: prior.branch,
             feedback: [followupPrompt(issue.identifier, pr.number, links)] } });
         registry[issue.id] = { ...next, identifier: issue.identifier, attempts: rec.attempts, seenAt: Date.now(), priorResult: prior };
         write(registryPath, registry); running++;
@@ -89,17 +111,20 @@ export async function managedPoll({ dir, issues, runtime, cwd, config, workflowF
       if (max && running >= max) break;
       if (processed.has(issue.id) || ['completed', 'canceled'].includes(issue.state?.type) || isBlocked(issue)) continue;
       const previous = registry[issue.id];
-      if (previous && isAlive(previous.pid)) continue;
+      if (previous && (isAlive(previous.pid) || !retries.has(issue.id))) continue;
       if ((previous?.attempts || 0) >= attempts) continue;
       try {
         if (!existsSync(cwd)) throw new Error(`Repository missing: ${cwd}`);
-        const rec = await start({ dir, issue, workflow: workflowFor(issue).workflow, runtime, cwd, env });
+        const retry = retries.get(issue.id);
+        const selectedRuntime = previous?.runtime || runtime;
+        const rec = await start({ dir, issue, workflow: retry?.workflow || workflowFor(issue).workflow, runtime: selectedRuntime, cwd, env,
+          ...(retry ? { continuation: retry.continuation } : {}) });
         registry[issue.id] = { ...rec, identifier: issue.identifier, attempts: (previous?.attempts || 0) + 1 };
         // Persist ownership before any remote write. A comment failure cannot duplicate dispatch.
         write(registryPath, registry);
         processed.add(issue.id); write(statePath, [...processed]);
         running++;
-        await announce(issue.id, `Dispatched to ${runtime} managed session ${rec.id}.`);
+        await announce(issue.id, `Dispatched to ${rec.runtime} managed session ${rec.id}.`);
       } catch (err) {
         problems.push(`${issue.identifier}: ${err.message}`);
         await announce(issue.id, `⚠️ ${runtime} dispatch failed: ${err.message}`);
