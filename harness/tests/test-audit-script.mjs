@@ -260,4 +260,31 @@ check("no expected-files section retains the no-scope default", () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+check("explicit path lists are honored without reading explanatory symbols", () => {
+  const dir = repo("## Allowed paths\n\n- `src/a.ts`, `src/b.ts`, and the new `src/c.ts` for the API.\n- `src/d.ts` — replaces `outside.ts` with `helper()`\n\n## Forbidden paths\n\n- `src/secret.ts`, and `src/blocked.ts`\n", ["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts"]);
+  assert(/allowed-paths *clean/.test(run(dir, false)), "listed paths rejected");
+  writeFileSync(join(dir, "outside.ts"), "x");
+  assert(/allowed-paths *DIRTY/.test(run(dir, true)), "prose reference became an allowed path");
+  unlinkSync(join(dir, "outside.ts"));
+  writeFileSync(join(dir, "src/blocked.ts"), "x");
+  assert(/forbidden-paths *DIRTY/.test(run(dir, true)), "second explicit forbidden path was ignored");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+for (const list of [
+  "`src/a.ts` (new), `src/b.ts` (new)",
+  "`src/a.ts`, and the `src/b.ts`",
+  "`src/a.ts`, and a new `src/b.ts`",
+  "`src/a.ts` / `src/b.ts`",
+  "`src/a.ts`; `src/b.ts`",
+  "`src/a.ts` + `src/b.ts`",
+]) check(`general declaration-list grammar: ${list}`, () => {
+  const allowed = repo(`## Allowed paths\n\n- ${list}\n`, ["src/a.ts", "src/b.ts"]);
+  assert(/allowed-paths *clean/.test(run(allowed, false)), "explicit path lost");
+  rmSync(allowed, { recursive: true, force: true });
+  const forbidden = repo(`## Allowed paths\n\n- \`src/**\`\n\n## Forbidden paths\n\n- ${list}\n`, ["src/b.ts"]);
+  assert(/forbidden-paths *DIRTY/.test(run(forbidden, true)), "second forbidden path lost");
+  rmSync(forbidden, { recursive: true, force: true });
+});
+
 process.exit(failed ? 1 : 0);

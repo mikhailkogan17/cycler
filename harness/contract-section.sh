@@ -16,12 +16,11 @@
 #    reported DIRTY on the very files the contract allowed. Moving the paragraph made the identical
 #    tree CLEAN, so the check was punishing the author for explaining themselves.
 #
-# 2. Take the FIRST backticked token of each bullet, not every one. Contracts label their entries
-#    ("New: `a/b.swift`", "Modified: `c.ts`"), so stripping only the bullet marker leaves the label
-#    glued to the path and every such entry reads as "outside Allowed paths". And a bullet's trailing
-#    explanation legitimately names symbols in backticks — "- `src/a.ts` — replaces `oldThing()` with
-#    `newThing()`" declares ONE file, not three. Counting all of them turned a 3-file contract into a
-#    22-file one. One bullet, one declaration.
+# 2. Read a declaration and a contiguous path list separated by comma, semicolon,
+# slash, plus, and/or. Articles and new/modified/existing/deleted labels are allowed.
+# Stop at
+# explanatory prose, so "`src/a.ts` — replaces `oldThing()`" declares only a.ts.
+# Labels before the first token are supported; prose references are never declarations.
 #
 # A false positive here is worse than no check at all: it trains the next reader to skim past the
 # line that is supposed to stop them.
@@ -30,6 +29,18 @@ contract_section() {
   local file="$1" name="$2"
   sed -n "/^## *$name/,/^## /p" "$file" \
     | grep -E '^ *[-*] ' \
-    | sed -n 's/^[^`]*`\([^`]*\)`.*/\1/p' \
+    | awk '
+      {
+        rest = $0; first = 1
+        while (match(rest, /`[^`]+`/)) {
+          connector = substr(rest, 1, RSTART - 1)
+          gsub(/[[:space:]]/, "", connector)
+          connector = tolower(connector)
+          gsub(/\((new|modified|existing|deleted)\)/, "", connector)
+          if (!first && connector !~ /^([,;+\/]|and|or)(and|or)?(a|an|the)?(new|modified|existing|deleted)?$/) break
+          print substr(rest, RSTART + 1, RLENGTH - 2)
+          rest = substr(rest, RSTART + RLENGTH); first = 0
+        }
+      }' \
     | sed 's/ *#.*//' | sed '/^$/d'
 }
