@@ -32,6 +32,17 @@ try {
   for (const runtime of ['claude', 'codex', 'dsh']) {
     assert.deepEqual(await runAgent({ runtime, config: { runtimes: { [runtime]: { bin: fake } } }, cwd: temp, prompt: evil, schema }), { ok: true });
   }
+  const largePrompt = 'untrusted review data '.repeat(20000);
+  await runAgent({ runtime: 'claude', cwd: temp, prompt: largePrompt, schema,
+    run: async (argv, options) => {
+      assert(!argv.some(arg => arg.includes(largePrompt)));
+      assert(!argv.includes('--'));
+      assert(options.input.startsWith(largePrompt));
+      return JSON.stringify({ subtype: 'success', structured_output: { ok: true } });
+    } });
+  const stdinCli = join(temp, 'stdin-cli.mjs');
+  writeFileSync(stdinCli, '#!/usr/bin/env node\nimport {readFileSync} from "node:fs"; console.log(readFileSync(0,"utf8"));', { mode: 0o755 });
+  assert((await runAgent({ runtime: 'claude', config: { runtimes: { claude: { bin: stdinCli } } }, cwd: temp, prompt: largePrompt })).startsWith(largePrompt));
   const claudeArgs = invocation({ runtime: 'claude', cwd: temp, prompt: 'review', schema });
   assert.equal(claudeArgs[claudeArgs.indexOf('--output-format') + 1], 'json');
   assert.deepEqual(JSON.parse(claudeArgs[claudeArgs.indexOf('--json-schema') + 1]), schema);
