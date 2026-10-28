@@ -278,6 +278,10 @@ for (const list of [
   "`src/a.ts` / `src/b.ts`",
   "`src/a.ts`; `src/b.ts`",
   "`src/a.ts` + `src/b.ts`",
+  "`src/a.ts`, and their test companion `src/b.ts`",
+  "`src/a.ts` and its corresponding integration test `src/b.ts`",
+  "`src/a.ts`; the matching configuration file `src/b.ts`",
+  "`src/a.ts` or the associated source module `src/b.ts`",
 ]) check(`general declaration-list grammar: ${list}`, () => {
   const allowed = repo(`## Allowed paths\n\n- ${list}\n`, ["src/a.ts", "src/b.ts"]);
   assert(/allowed-paths *clean/.test(run(allowed, false)), "explicit path lost");
@@ -285,6 +289,24 @@ for (const list of [
   const forbidden = repo(`## Allowed paths\n\n- \`src/**\`\n\n## Forbidden paths\n\n- ${list}\n`, ["src/b.ts"]);
   assert(/forbidden-paths *DIRTY/.test(run(forbidden, true)), "second forbidden path lost");
   rmSync(forbidden, { recursive: true, force: true });
+});
+
+for (const prose of [
+  "`src/a.ts` and calls `outside.ts`",
+  "`src/a.ts`, which replaces `outside.ts`",
+  "`src/a.ts` and the function `outside.ts`",
+  "`src/a.ts` and their test companion uses `outside.ts`",
+  "`src/a.ts`, for example `outside.ts`",
+]) check(`explanatory references are not labelled declarations: ${prose}`, () => {
+  const dir = repo(`## Allowed paths\n\n- ${prose}\n`, ["src/a.ts"]);
+  writeFileSync(join(dir, "outside.ts"), "x");
+  assert(/allowed-paths *DIRTY/.test(run(dir, true)), "narrative reference became allowed");
+  rmSync(dir, { recursive: true, force: true });
+});
+check("three-item API list includes its explicitly labelled test companion", () => {
+  const dir = repo("## Allowed paths\n\n- `packages/store/src/local-api.ts`, `packages/store/src/local-api-main.ts`, and their test companion `__tests__/local-api.test.ts`\n", ["packages/store/src/local-api.ts", "packages/store/src/local-api-main.ts", "__tests__/local-api.test.ts"]);
+  assert(/allowed-paths *clean/.test(run(dir, false)), "explicit test companion lost");
+  rmSync(dir, { recursive: true, force: true });
 });
 
 process.exit(failed ? 1 : 0);
