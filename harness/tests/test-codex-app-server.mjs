@@ -21,7 +21,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   if (r.method === 'initialize') send({id:r.id,result:{userAgent:'fake'}});
   else if (r.method === 'account/rateLimits/read') {
     if (mode === 'quota-rpc-error') { send({id:r.id,error:{message:'usage unavailable'}}); return; }
-    const bucket = {limitId:'codex',primary:{usedPercent:mode === 'quota-primary' ? 80 : 1,resetsAt:123},secondary:{usedPercent:mode === 'quota-fallback' ? 90 : mode === 'quota-weekly' ? 80 : 30,resetsAt:456}};
+    const bucket = {limitId:'codex',primary:{usedPercent:mode === 'quota-fallback-both' ? 80 : mode === 'quota-primary' ? 80 : 1,resetsAt:123},secondary:{usedPercent:mode === 'quota-fallback-both' ? 90 : mode === 'quota-fallback' ? 90 : mode === 'quota-weekly' ? 80 : 30,resetsAt:456}};
     send({id:r.id,result:mode === 'quota-missing' ? {} : {ordinaryUsageAllowed:mode !== 'quota-denied',rateLimitsByLimitId:{codex:bucket}}});
   }
   else if (r.method === 'thread/start' || r.method === 'thread/resume') { currentThread = r.params.threadId || 'thread-1'; send({id:r.id,result:{thread:{id:currentThread,source:'vscode',cwd:r.params.cwd},model:r.params.model}}); }
@@ -146,6 +146,35 @@ try {
     } }), { ok: true });
   assert.equal(fallbacks, 1);
   delete process.env.CYCLER_TEST_MODE;
+  // Every stage uses the persistent Codex preference, never the observed fallback runtime.
+  const sequence = [];
+  const sequenceConfig = { runtimes: { codex: { bin: fake, transport: 'app-server', usage_reserve_percent: 20,
+    weekly_usage_reserve_percent: 10, weekly_fallback_claude: true }, claude: { model: 'sonnet' } } };
+  for (const mode of ['ok', 'quota-fallback-both', 'quota-fallback', 'ok']) {
+    process.env.CYCLER_TEST_MODE = mode;
+    const journal = join(temp, `sequence-${sequence.length}.jsonl`);
+    writeFileSync(journal, ''); process.env.CYCLER_TEST_JOURNAL = journal;
+    const observed = [];
+    const result = await runAgent({ runtime: 'codex', model: 'gpt-6-sol', threadId: 'existing-workflow', cwd: temp,
+      prompt: 'continue saved stage; preserve contract', schema, config: sequenceConfig,
+      onRuntime: info => observed.push(info.runtime),
+      run: async argv => {
+        assert.equal(argv[0], 'claude'); assert(argv.includes('sonnet')); assert(!argv.includes('gpt-6-sol'));
+        assert(!argv.includes('existing-workflow'));
+        return JSON.stringify({ subtype: 'success', structured_output: { ok: true } });
+      } });
+    assert.deepEqual(result, { ok: true }); assert.equal(observed.length, 1);
+    sequence.push(observed[0]);
+    const calls = readFileSync(journal, 'utf8').trim().split('\n').map(JSON.parse);
+    assert(calls.some(c => c.method === 'account/rateLimits/read'), 'fresh metadata before every stage');
+    const resumed = calls.find(c => c.method === 'thread/resume');
+    if (observed[0] === 'codex') {
+      assert.equal(resumed.params.threadId, 'existing-workflow'); assert.equal(resumed.params.model, 'gpt-6-sol');
+    } else assert(!calls.some(c => ['thread/start', 'thread/resume', 'turn/start'].includes(c.method)));
+  }
+  assert.deepEqual(sequence, ['codex', 'claude', 'claude', 'codex'], 'primary reset alone cannot end weekly fallback');
+  delete process.env.CYCLER_TEST_MODE;
+  process.env.CYCLER_TEST_JOURNAL = journal;
   const optional = { type: 'object', properties: { checks: { type: 'array', maxItems: 8, items: {
     type: 'object', properties: { passed: { type: 'boolean' }, outputTail: { type: 'string' } }, required: ['passed']
   } } }, required: [] };
