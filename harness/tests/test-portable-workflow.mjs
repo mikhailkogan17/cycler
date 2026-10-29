@@ -59,6 +59,20 @@ try {
   assert(saved.codexThreads.some(t => t.stage === 'implementer'));
   assert.equal(saved.status, 'completed', 'terminal updates must retain session identities');
   save(statePath, { status: 'running' });
+  const providers = [];
+  await runWorkflow({ cwd: dir, task: 'test', runtime: 'codex', statePath, noCommit: true,
+    config: { review: { runtime: 'claude', model: 'sonnet' } } }, { enforce: false,
+    agent: async req => {
+      const runtime = providers.length === 1 ? 'claude' : 'codex';
+      await req.onRuntime({ runtime, ...(runtime === 'claude' ? { reason: 'weekly ceiling', resetsAt: 456 } : {}) });
+      const current = JSON.parse(readFileSync(statePath, 'utf8'));
+      assert.equal(current.preferredRuntime, 'codex'); assert.equal(current.effectiveRuntime, runtime);
+      assert.equal(current.runtimeFallback?.runtime || null, runtime === 'claude' ? 'claude' : null);
+      providers.push(runtime);
+      return staged(req.label, req.prompt, {}, []);
+    } });
+  assert(providers.length >= 3); assert.deepEqual(providers.slice(0, 3), ['codex', 'claude', 'codex']);
+  save(statePath, { status: 'running' });
   const groupedCalls = [];
   const groupedResponse = makeResponder({ auditDirty: [false], verifyGreen: [true], reviewApproved: [true] });
   const groupedResult = await runWorkflow({ cwd: dir, task: 'test', issueId: 'TEST-1', runtime: 'codex', statePath,
@@ -125,6 +139,31 @@ try {
   assert.equal(reviewHeld.status, 'blocked');
   const reviewQuota = JSON.parse(readFileSync(reviewQuotaState, 'utf8')).quotaHold;
   assert.equal(reviewQuota.stage, 'github-review:bugs'); assert.equal(reviewQuota.resetsAt, 10000);
+  for (const workerRuntime of ['codex', 'claude']) {
+    const expectedWorkerState = { effectiveRuntime: workerRuntime,
+      runtimeFallback: workerRuntime === 'claude' ? { runtime: 'claude', reason: 'weekly ceiling', resetsAt: 456 } : null };
+    const claudeReviewResponse = makeResponder({ auditDirty: [false], verifyGreen: [true], reviewApproved: [true] });
+    await runWorkflow({ cwd: dir, task: 'test', runtime: 'codex', statePath,
+      config: { review: { runtime: 'claude', model: 'sonnet' } } }, { enforce: false,
+      agent: async req => {
+        if (req.runtime === 'claude') {
+          await req.onRuntime({ runtime: 'claude' });
+          const current = JSON.parse(readFileSync(statePath, 'utf8'));
+          assert.equal(current.preferredRuntime, 'codex', 'reviewer cannot overwrite base preference');
+          assert.equal(current.effectiveRuntime, expectedWorkerState.effectiveRuntime, 'reviewer cannot overwrite worker provider');
+          assert.deepEqual(current.runtimeFallback, expectedWorkerState.runtimeFallback, 'reviewer cannot erase active weekly fallback');
+          return { findings: [] };
+        }
+        return claudeReviewResponse(req.label, req.prompt, {}, []);
+      },
+      reviewer: async ({ agent, config }) => {
+        assert.equal(config.review.runtime, 'claude');
+        patchState(statePath, expectedWorkerState);
+        await agent({ runtime: 'claude', cwd: dir, prompt: 'Review. Lens: bugs.' });
+        return { approved: true, published: true, fatal: false, head: fullCommit, confirmed: [], threads: [], blockingIssues: [] };
+      } });
+    assert.equal(JSON.parse(readFileSync(statePath, 'utf8')).preferredRuntime, 'codex');
+  }
   const reviewed = makeResponder({ auditDirty: [false], verifyGreen: [true], reviewApproved: [true] });
   const blockedReview = await runWorkflow({ cwd: dir, task: 'test', issueId: 'TEST-1', runtime: 'codex', config: {}, statePath }, {
     enforce: false,

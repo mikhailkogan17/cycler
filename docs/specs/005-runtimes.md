@@ -162,3 +162,12 @@ Use `runtimes.claude.implementation_args` for writable stages while retaining th
 readonly `args` for independent checks. `subscription_only: true` rejects API/provider
 environment overrides and verifies first-party `claude.ai` authentication before each Claude
 stage; an unauthenticated worker stops instead of spending API credits.
+
+The persisted request `runtime` is the preferred provider, not the latest effective provider.
+Controllers must keep `runtime: codex` and the Luna/Sol model preferences when weekly usage
+selects Claude. Each stage obtains a new quota reading; once both windows are below their
+ceilings, it resumes the original Codex thread with its original model. A 5h reset while weekly
+usage remains above its ceiling continues on Claude. State separates `preferredRuntime` from
+`effectiveRuntime` and clears the active `runtimeFallback` when Codex returns. Independent
+review routing is separate and remains Claude. Existing in-memory Claude workers are not
+restarted; apply the persistent preference to their next inspected continuation.

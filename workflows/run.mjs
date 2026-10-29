@@ -47,8 +47,9 @@ function quotaTracked(invoke, args) {
   return async request => {
     try { return await invoke({ ...request, onRuntime: async info => {
       await request.onRuntime?.(info);
-      if (args.statePath) patchState(args.statePath, { effectiveRuntime: info.runtime,
-        runtimeFallback: { ...info, stage: request.label || 'agent', checkedAt: Date.now() } });
+      const independentReview = /^(github-review:|review:|refute:|synthesis)/.test(request.label || '');
+      if (args.statePath && !independentReview) patchState(args.statePath, { effectiveRuntime: info.runtime,
+        runtimeFallback: info.reason ? { ...info, stage: request.label || 'agent', checkedAt: Date.now() } : null });
     } }); }
     catch (error) {
       if (error.code === 'CYCLER_QUOTA_HOLD' && args.statePath) patchState(args.statePath, {
@@ -64,6 +65,8 @@ export async function runWorkflow(args, { agent: rawInvoke = runAgent, reviewer 
   const threadArgs = { ...args, config };
   const checkSummaries = [];
   const runtime = runtimeName(config, args.runtime);
+  // A request runtime is a preference; quota fallback is selected afresh for each stage.
+  if (args.statePath) patchState(args.statePath, { preferredRuntime: runtime });
   const cwd = expand(args.cwd || get(config, 'repo.path') || process.cwd());
   const resolved = { ...args, ...(args.contractPath ? { contractPath: resolve(cwd, args.contractPath) } : {}), cwd, config, runtime, pluginRoot: ROOT, githubReview: args.githubReview !== false,
     prBase: args.prBase || get(config, 'repo.base') || 'main', branchPrefix: args.branchPrefix || get(config, 'repo.branch_prefix') || `${runtime}/` };
