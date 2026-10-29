@@ -47,7 +47,8 @@ function quotaTracked(invoke, args) {
   return async request => {
     try { return await invoke({ ...request, onRuntime: async info => {
       await request.onRuntime?.(info);
-      if (args.statePath) patchState(args.statePath, { effectiveRuntime: info.runtime,
+      const independentReview = /^(github-review:|review:|refute:|synthesis)/.test(request.label || '');
+      if (args.statePath && !independentReview) patchState(args.statePath, { effectiveRuntime: info.runtime,
         runtimeFallback: info.reason ? { ...info, stage: request.label || 'agent', checkedAt: Date.now() } : null });
     } }); }
     catch (error) {
