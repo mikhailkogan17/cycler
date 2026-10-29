@@ -20,6 +20,11 @@ try {
   assert.throws(() => invocation({ runtime: 'dsh', model: 'missing', prompt: 'x' }), /model_patches/);
   assert.deepEqual(stageRoute({ review: { runtime: 'dsh', lenses: { bugs: { runtime: 'codex', model: 'test-model' } } } }, 'review:bugs', 'claude', 'haiku'), { runtime: 'codex', model: 'test-model' });
   assert.equal(stageRoute({}, 'contract', 'codex', 'opus').model, undefined);
+  const separated = { runtimes: { claude: { args: ['--restricted', '--tools', 'Read'], implementation_args: ['--permission-mode', 'auto'] } } };
+  const writeRoute = invocation({ runtime: 'claude', config: separated, prompt: 'write' });
+  const reviewRoute = invocation({ runtime: 'claude', config: separated, prompt: 'review', readOnly: true });
+  assert(writeRoute.includes('auto')); assert(!writeRoute.includes('--restricted'));
+  assert(reviewRoute.includes('--restricted')); assert(!reviewRoute.includes('auto'));
   const fake = join(temp, 'fake-cli.mjs');
   writeFileSync(fake, '#!/usr/bin/env node\nimport { writeFileSync } from "node:fs"; const a=process.argv.slice(2); const value=JSON.stringify({ok:true}); const i=a.indexOf("--output-last-message"); if(i>=0)writeFileSync(a[i+1],value);else if(a.includes("--json-schema"))console.log(JSON.stringify({type:"result",subtype:"success",is_error:false,result:"I reported the result.",structured_output:{ok:true}}));else if(a.includes("--json"))console.log(JSON.stringify({type:"final",text:value}));else console.log(value);\n', { mode: 0o755 });
   const protectedFile = join(temp, 'contract.md');
@@ -31,6 +36,13 @@ try {
   const schema = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' } } };
   for (const runtime of ['claude', 'codex', 'dsh']) {
     assert.deepEqual(await runAgent({ runtime, config: { runtimes: { [runtime]: { bin: fake } } }, cwd: temp, prompt: evil, schema }), { ok: true });
+  }
+  for (const auth of [{ loggedIn: false, authMethod: 'none' }, { loggedIn: true, authMethod: 'api_key', apiProvider: 'firstParty' }]) {
+    let calls = 0;
+    await assert.rejects(runAgent({ runtime: 'claude', cwd: temp, prompt: 'must not run',
+      config: { runtimes: { claude: { subscription_only: true } } },
+      run: async argv => { calls++; assert.deepEqual(argv.slice(1), ['auth', 'status', '--json']); return JSON.stringify(auth); } }), /subscription/);
+    assert.equal(calls, 1);
   }
   const largePrompt = 'untrusted review data '.repeat(20000);
   await runAgent({ runtime: 'claude', cwd: temp, prompt: largePrompt, schema,

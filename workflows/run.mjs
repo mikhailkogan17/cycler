@@ -45,7 +45,11 @@ export async function canonicalCommit(cwd, commit) {
 }
 function quotaTracked(invoke, args) {
   return async request => {
-    try { return await invoke(request); }
+    try { return await invoke({ ...request, onRuntime: async info => {
+      await request.onRuntime?.(info);
+      if (args.statePath) patchState(args.statePath, { effectiveRuntime: info.runtime,
+        runtimeFallback: { ...info, stage: request.label || 'agent', checkedAt: Date.now() } });
+    } }); }
     catch (error) {
       if (error.code === 'CYCLER_QUOTA_HOLD' && args.statePath) patchState(args.statePath, {
         quotaHold: { reason: error.message, resetsAt: error.resetsAt ?? null, stage: request.label || 'agent', checkedAt: Date.now() },

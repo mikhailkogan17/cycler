@@ -140,3 +140,25 @@ CLI's authenticated account, repository permissions, and a working local gate.
 Sources: [Codex non-interactive mode](https://developers.openai.com/codex/noninteractive/),
 [DSH CLI](https://github.com/deepseek-ai/deepseek-harness/tree/master/apps/cli),
 [DSH headless](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/apps/headless).
+
+### Separate windows and subscription fallback
+
+`runtimes.codex.usage_reserve_percent` sets the primary (5h) reserve. Optional
+`weekly_usage_reserve_percent` sets the weekly reserve independently; omitting it retains
+the original scalar policy for both windows. For example, `20` and `10` admit stages below
+80% primary and 90% weekly used. Invalid policy or unavailable window data fails closed.
+
+With `weekly_fallback_claude: true`, each stage preflight switches to the configured Claude
+model (default Sonnet) at the weekly ceiling, before creating/resuming a Codex thread.
+This includes implementation, audit, verification and cheap Git stages; independent Claude
+review stays independent. A primary ceiling alone holds work until reset. An admitted turn
+can cross a ceiling; the next stage checks again. Fallback requires the app-server transport.
+Claude receives current stage instructions and the same worktree, never the Codex model or
+thread ID; the original Codex workflow identity remains available after its weekly reset.
+Configure and authenticate Claude's subscription before enabling this route; no credits are
+purchased by Cycler. The controller must preserve task/contract and prior feedback on retries.
+
+Use `runtimes.claude.implementation_args` for writable stages while retaining the existing
+readonly `args` for independent checks. `subscription_only: true` rejects API/provider
+environment overrides and verifies first-party `claude.ai` authentication before each Claude
+stage; an unauthenticated worker stops instead of spending API credits.

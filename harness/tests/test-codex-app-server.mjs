@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runCodexAppServer } from '../../lib/codex-app-server.mjs';
+import { runCodexAppServer, assertUsageReserve } from '../../lib/codex-app-server.mjs';
 import { runAgent } from '../../lib/runtimes.mjs';
 import { runSkill, save } from '../../workflows/run.mjs';
 
@@ -21,7 +21,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   if (r.method === 'initialize') send({id:r.id,result:{userAgent:'fake'}});
   else if (r.method === 'account/rateLimits/read') {
     if (mode === 'quota-rpc-error') { send({id:r.id,error:{message:'usage unavailable'}}); return; }
-    const bucket = {limitId:'codex',primary:{usedPercent:mode === 'quota-primary' ? 80 : 1,resetsAt:123},secondary:{usedPercent:mode === 'quota-weekly' ? 80 : 30,resetsAt:456}};
+    const bucket = {limitId:'codex',primary:{usedPercent:mode === 'quota-primary' ? 80 : 1,resetsAt:123},secondary:{usedPercent:mode === 'quota-fallback' ? 90 : mode === 'quota-weekly' ? 80 : 30,resetsAt:456}};
     send({id:r.id,result:mode === 'quota-missing' ? {} : {ordinaryUsageAllowed:mode !== 'quota-denied',rateLimitsByLimitId:{codex:bucket}}});
   }
   else if (r.method === 'thread/start' || r.method === 'thread/resume') { currentThread = r.params.threadId || 'thread-1'; send({id:r.id,result:{thread:{id:currentThread,source:'vscode',cwd:r.params.cwd},model:r.params.model}}); }
@@ -52,6 +52,17 @@ async function run(mode = 'ok', options = {}) {
   return { value, threads, calls: readFileSync(journal, 'utf8').trim().split('\n').map(JSON.parse) };
 }
 try {
+  const usage = (primary, secondary) => ({ ordinaryUsageAllowed: true, rateLimitsByLimitId: { codex: {
+    primary: { usedPercent: primary }, secondary: { usedPercent: secondary, resetsAt: 456 }
+  } } });
+  assertUsageReserve(usage(79, 89), 20, 10, true);
+  assert.throws(() => assertUsageReserve(usage(80, 89), 20, 10, true), e => e.code === 'CYCLER_QUOTA_HOLD');
+  assert.throws(() => assertUsageReserve(usage(1, 90), 20, 10, true), e => e.code === 'CYCLER_WEEKLY_FALLBACK');
+  assert.throws(() => assertUsageReserve(usage(100, 90), 20, 10, true), e => e.code === 'CYCLER_WEEKLY_FALLBACK');
+  assert.throws(() => assertUsageReserve(usage(undefined, 90), 20, 10, true), e => e.code === 'CYCLER_QUOTA_HOLD');
+  assert.throws(() => assertUsageReserve(usage(1, 90), 20, 10), e => e.code === 'CYCLER_QUOTA_HOLD');
+  assert.throws(() => assertUsageReserve(usage(1, 1), 20, 0), /weekly_usage_reserve/);
+  assert.throws(() => assertUsageReserve(usage(1, 1), 20, 10, 'yes'), /boolean/);
   const ok = await run();
   assert.equal(ok.value, '{"ok":true}');
   const start = ok.calls.find(x => x.method === 'thread/start').params;
@@ -75,6 +86,11 @@ try {
   }
   await assert.rejects(run('ok', { usageReservePercent: 0 }), /usage_reserve_percent/);
   await assert.rejects(run('ok', { usageReservePercent: 100 }), /usage_reserve_percent/);
+  const weeklyAdmitted = await run('quota-weekly', { usageReservePercent: 20, weeklyUsageReservePercent: 10, weeklyFallbackClaude: true });
+  assert(weeklyAdmitted.calls.some(x => x.method === 'turn/start'));
+  const fallbackIndex = index;
+  await assert.rejects(run('quota-fallback', { usageReservePercent: 20, weeklyUsageReservePercent: 10, weeklyFallbackClaude: true }), e => e.code === 'CYCLER_WEEKLY_FALLBACK');
+  assert(!readFileSync(join(temp, `journal-${fallbackIndex}.jsonl`), 'utf8').includes('thread/start'));
   const resumed = await run('ok', { threadId: 'workflow-thread', cwd: temp });
   assert.equal(resumed.calls.some(x => x.method === 'thread/start'), false);
   const resume = resumed.calls.find(x => x.method === 'thread/resume').params;
@@ -114,6 +130,22 @@ try {
   assert.deepEqual(await runAgent({ runtime: 'codex', cwd: temp, prompt: 'test', schema, label: 'implementer',
     config: { runtimes: { codex: { bin: fake, transport: 'app-server' } } }, onThread: t => threads.push(t) }), { ok: true });
   assert.equal(threads[0].name, 'Cycler · implementer');
+  process.env.CYCLER_TEST_MODE = 'quota-fallback';
+  let fallbacks = 0;
+  assert.deepEqual(await runAgent({ runtime: 'codex', cwd: temp, model: 'gpt-6-luna', threadId: 'codex-original',
+    prompt: 'preserve saved implementation', schema, config: { runtimes: {
+      codex: { bin: fake, transport: 'app-server', usage_reserve_percent: 20, weekly_usage_reserve_percent: 10, weekly_fallback_claude: true },
+      claude: { model: 'sonnet' }
+    } }, onThread: () => assert.fail('fallback must not create or overwrite Codex identity'),
+    onRuntime: info => { assert.equal(info.runtime, 'claude'); if (info.reason) fallbacks++; },
+    run: async (argv, options) => {
+      assert.equal(argv[0], 'claude'); assert(argv.includes('sonnet'));
+      assert(!argv.includes('gpt-6-luna')); assert(!argv.includes('codex-original'));
+      assert(options.input.includes('preserve saved implementation'));
+      return JSON.stringify({ subtype: 'success', structured_output: { ok: true } });
+    } }), { ok: true });
+  assert.equal(fallbacks, 1);
+  delete process.env.CYCLER_TEST_MODE;
   const optional = { type: 'object', properties: { checks: { type: 'array', maxItems: 8, items: {
     type: 'object', properties: { passed: { type: 'boolean' }, outputTail: { type: 'string' } }, required: ['passed']
   } } }, required: [] };
