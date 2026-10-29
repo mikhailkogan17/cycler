@@ -309,4 +309,30 @@ check("three-item API list includes its explicitly labelled test companion", () 
   rmSync(dir, { recursive: true, force: true });
 });
 
+for (const phrase of ["other than", "except", "except for", "excluding", "apart from", "with the exception of"]) {
+  check(`a named forbidden-clause exception is not itself forbidden: ${phrase}`, () => {
+    const dir = repo(`## Allowed paths\n\n- \`tests/keep.test.ts\`\n\n## Forbidden paths\n\n- Any test file ${phrase} \`tests/keep.test.ts\`; the old \`legacy/**\` worktree.\n\n## Files expected to change\n\n- \`tests/keep.test.ts\`\n`, ["tests/keep.test.ts"]);
+    assert(/forbidden-paths *clean/.test(run(dir, false)), "named exception became forbidden");
+    writeFileSync(join(dir, "tests/other.test.ts"), "x");
+    assert(/allowed-paths *DIRTY/.test(run(dir, true)), "exception granted unrelated scope");
+    rmSync(dir, { recursive: true, force: true });
+  });
+}
+check("exception lists retain broad forbids and later explicit forbidden clauses", () => {
+  const contract = "## Allowed paths\n\n- `tests/**`\n- `legacy/**`\n\n## Forbidden paths\n\n- `tests/**` except `tests/keep.test.ts` and `tests/also.test.ts`; the old `legacy/**` worktree.\n\n## Files expected to change\n\n- `tests/keep.test.ts`\n- `tests/also.test.ts`\n";
+  const dir = repo(contract, ["tests/keep.test.ts", "tests/also.test.ts"]);
+  assert(/forbidden-paths *clean/.test(run(dir, false)), "exception list became forbidden");
+  writeFileSync(join(dir, "tests/other.test.ts"), "x");
+  assert(/forbidden-paths *DIRTY/.test(run(dir, true)), "broad test prohibition was lost");
+  unlinkSync(join(dir, "tests/other.test.ts"));
+  mkdirSync(join(dir, "legacy"), { recursive: true }); writeFileSync(join(dir, "legacy/file.ts"), "x");
+  assert(/forbidden-paths *DIRTY/.test(run(dir, true)), "later explicit worktree prohibition was lost");
+  rmSync(dir, { recursive: true, force: true });
+});
+check("an exception mention never overrides a separate exact forbidden declaration", () => {
+  const dir = repo("## Allowed paths\n\n- `tests/keep.test.ts`\n\n## Forbidden paths\n\n- Any test other than `tests/keep.test.ts`\n- `tests/keep.test.ts`\n\n## Files expected to change\n\n- `tests/keep.test.ts`\n", ["tests/keep.test.ts"]);
+  assert(/forbidden-paths *DIRTY/.test(run(dir, true)), "exact prohibition was waived");
+  rmSync(dir, { recursive: true, force: true });
+});
+
 process.exit(failed ? 1 : 0);
