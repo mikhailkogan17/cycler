@@ -21,6 +21,8 @@
 # Stop at
 # explanatory prose, so "`src/a.ts` — replaces `oldThing()`" declares only a.ts.
 # Labels before the first token are supported; prose references are never declarations.
+# Forbidden-section exception clauses name exclusions, not new forbidden declarations.
+# They do not grant scope: Allowed/Expected and other forbidden patterns still apply.
 #
 # A false positive here is worse than no check at all: it trains the next reader to skim past the
 # line that is supposed to stop them.
@@ -29,10 +31,10 @@ contract_section() {
   local file="$1" name="$2"
   sed -n "/^## *$name/,/^## /p" "$file" \
     | grep -E '^ *[-*] ' \
-    | awk '
+    | awk -v section="$name" '
       function list_connector(text, has_separator) {
         text = tolower(text)
-        gsub(/\((new|modified|existing|deleted)\)/, "", text)
+        gsub(/\((new|modified|existing|deleted|old)\)/, "", text)
         gsub(/[[:space:]]+/, " ", text)
         sub(/^ /, "", text); sub(/ $/, "", text)
         has_separator = 0
@@ -40,17 +42,26 @@ contract_section() {
         if (text ~ /^(and|or)( |$)/) { sub(/^(and|or) */, "", text); has_separator = 1 }
         if (!has_separator) return 0
         sub(/^(a|an|the|its|their|our)( |$)/, "", text)
-        if (text ~ /^(new|modified|existing|deleted)?$/) return 1
+        if (text ~ /^(new|modified|existing|deleted|old)?$/) return 1
         # A label describes a filesystem role, not what code does. Verbs and explanatory
         # phrases deliberately do not match, even if followed by a backticked path.
-        return text ~ /^((new|modified|existing|deleted|matching|corresponding|associated|related|unit|integration|regression|test|source|config|configuration|build|runtime|supporting) )*(files?|tests?|companions?|fixtures?|scripts?|modules?|configs?|configurations?|assets?|headers?|implementations?)$/
+        return text ~ /^((new|modified|existing|deleted|old|matching|corresponding|associated|related|unit|integration|regression|test|source|config|configuration|build|runtime|supporting) )*(files?|tests?|companions?|fixtures?|scripts?|modules?|configs?|configurations?|assets?|headers?|implementations?)$/
+      }
+      function exception_prefix(text) {
+        text = tolower(text)
+        gsub(/[[:space:]]+/, " ", text)
+        return text ~ /(^| )(other than|except( for)?|excluding|apart from|with the exception of)( (a|an|the|following|file|files|test|tests))* *$/
       }
       {
-        rest = $0; first = 1
+        rest = $0; first = 1; excepting = 0
         while (match(rest, /`[^`]+`/)) {
           connector = substr(rest, 1, RSTART - 1)
-          if (!first && !list_connector(connector)) break
-          print substr(rest, RSTART + 1, RLENGTH - 2)
+          exception = section == "Forbidden paths" && exception_prefix(connector)
+          # Exception lists end at the next explicit semicolon declaration.
+          if (connector ~ /;/) excepting = 0
+          if (exception) excepting = 1
+          if (!first && !exception && !list_connector(connector)) break
+          if (!excepting) print substr(rest, RSTART + 1, RLENGTH - 2)
           rest = substr(rest, RSTART + RLENGTH); first = 0
         }
       }' \
