@@ -63,6 +63,20 @@ case "$TARGET" in
   "$HOME"/.claude/plans/*.md) exit 0 ;;
 esac
 
+# Auto-memory notes. They live at ~/.claude/projects/<project>/memory/<name>.md by design, and the
+# harness tells every session to write them there, so blocking them makes memory unusable from any
+# worktree. Same reasoning as the plan file: not repo state, reaches no branch, no gate and no PR.
+#
+# Judged by the RESOLVED directory, not the spelling, so a ../ escape or a symlinked directory does not
+# qualify. Direct children only, .md only, and never through a symlinked file.
+REAL_HOME="$(cd "$HOME" 2>/dev/null && pwd -P || printf '%s' "$HOME")"
+MEMORY_PARENT="${REAL_PROBE%/memory}"
+if [ "$MEMORY_PARENT" != "$REAL_PROBE" ] && [ "$(dirname "$MEMORY_PARENT")" = "$REAL_HOME/.claude/projects" ]; then
+  case "$TARGET" in
+    *.md) [ -L "$TARGET" ] || exit 0 ;;
+  esac
+fi
+
 # Writing into someone else's tree is never what a worktree session means to do.
 cat >&2 <<MSG
 Blocked: that path is outside this session's worktree.

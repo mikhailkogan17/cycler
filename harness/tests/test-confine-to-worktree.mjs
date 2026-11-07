@@ -55,6 +55,41 @@ check("the plans exemption does not open a path out of it", () => {
     "the exemption widened to the rest of ~/.claude");
 });
 
+// Auto-memory lives under the user's home, so these cases run against a throwaway HOME.
+const fakeHome = mkdtempSync(join(tmpdir(), "confine-home-"));
+const memDir = join(fakeHome, ".claude", "projects", "some-project", "memory");
+mkdirSync(memDir, { recursive: true });
+const runHome = (cwd, file) => {
+  const payload = JSON.stringify({ cwd, tool_input: { file_path: file } });
+  try { execFileSync("bash", [HOOK], { input: payload, encoding: "utf8", env: { ...process.env, HOME: fakeHome } }); return true; }
+  catch { return false; }
+};
+
+check("an auto-memory note is allowed", () => {
+  assert(runHome(wt, join(memDir, "note.md")), "blocked a memory note");
+  assert(runHome(wt, join(memDir, "MEMORY.md")), "blocked the memory index");
+});
+
+check("the memory exemption does not open a path out of it", () => {
+  assert(!runHome(wt, join(memDir, "evil.sh")), "a non-markdown file rode in on the exemption");
+  assert(!runHome(wt, join(memDir, "..", "..", "evil.md")), "a ../ escape rode in on the exemption");
+  mkdirSync(join(memDir, "sub"), { recursive: true });
+  assert(!runHome(wt, join(memDir, "sub", "x.md")), "a nested directory rode in on the exemption");
+  mkdirSync(join(fakeHome, ".claude", "projects", "a", "b", "memory"), { recursive: true });
+  assert(!runHome(wt, join(fakeHome, ".claude", "projects", "a", "b", "memory", "x.md")), "a deeper memory directory qualified");
+  mkdirSync(join(fakeHome, "memory"), { recursive: true });
+  assert(!runHome(wt, join(fakeHome, "memory", "x.md")), "a memory directory outside projects qualified");
+});
+
+check("a symlink cannot carry a write out through the memory exemption", () => {
+  const linkDir = join(fakeHome, ".claude", "projects", "linked");
+  mkdirSync(linkDir, { recursive: true });
+  symlinkSync(outside, join(linkDir, "memory"));
+  assert(!runHome(wt, join(linkDir, "memory", "x.md")), "a symlinked memory directory qualified");
+  symlinkSync(join(outside, "b.ts"), join(memDir, "link.md"));
+  assert(!runHome(wt, join(memDir, "link.md")), "a symlinked note qualified");
+});
+
 check("an absolute path into another checkout is blocked — APL-54's exact failure", () => {
   const r = run(wt, join(outside, "b.ts"));
   assert(!r.allowed, "allowed a write into another checkout");
@@ -82,4 +117,5 @@ check("outside a /workflow-feature worktree the hook does not fire", () => {
 
 rmSync(wt, { recursive: true, force: true });
 rmSync(outside, { recursive: true, force: true });
+rmSync(fakeHome, { recursive: true, force: true });
 process.exit(failed ? 1 : 0);
