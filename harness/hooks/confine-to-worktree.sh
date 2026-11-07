@@ -59,8 +59,20 @@ esac
 #
 # Safe to exempt: a plan file is not repo state. It reaches no branch, no gate and no PR, which is
 # exactly the reasoning the message below uses to REFUSE other outside paths.
+#
+# Judged by the RESOLVED directory, not the spelling: a case glob's * crosses /, so the old literal
+# match let ~/.claude/plans/../../x.md and ~/.claude/plans/sub/x.md through. Direct children only, .md
+# only, never through a symlinked file. Plan mode creates the directory with the first plan, so a
+# missing ~/.claude/plans is accepted when the path is spelled exactly and its existing ancestor is home.
+REAL_HOME="$(cd "$HOME" 2>/dev/null && pwd -P || printf '%s' "$HOME")"
 case "$TARGET" in
-  "$HOME"/.claude/plans/*.md) exit 0 ;;
+  *.md)
+    if [ ! -L "$TARGET" ]; then
+      [ "$REAL_PROBE" = "$REAL_HOME/.claude/plans" ] && exit 0
+      if [ "$(dirname "$TARGET")" = "$HOME/.claude/plans" ] && [ ! -e "$HOME/.claude/plans" ] && [ ! -L "$HOME/.claude/plans" ]; then
+        case "$REAL_PROBE" in "$REAL_HOME" | "$REAL_HOME/.claude") exit 0 ;; esac
+      fi
+    fi ;;
 esac
 
 # Auto-memory notes. They live at ~/.claude/projects/<project>/memory/<name>.md by design, and the
@@ -69,7 +81,6 @@ esac
 #
 # Judged by the RESOLVED directory, not the spelling, so a ../ escape or a symlinked directory does not
 # qualify. Direct children only, .md only, and never through a symlinked file.
-REAL_HOME="$(cd "$HOME" 2>/dev/null && pwd -P || printf '%s' "$HOME")"
 MEMORY_PARENT="${REAL_PROBE%/memory}"
 if [ "$MEMORY_PARENT" != "$REAL_PROBE" ] && [ "$(dirname "$MEMORY_PARENT")" = "$REAL_HOME/.claude/projects" ]; then
   case "$TARGET" in

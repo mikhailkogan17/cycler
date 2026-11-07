@@ -29,7 +29,7 @@
 | 2.6 | An explicit waiver in the contract re-opens the escape hatch | `test-escape-hatch-hook.mjs` |
 | 2.7 | A write outside the session's worktree is denied | `test-confine-to-worktree.mjs` |
 | 2.8 | The plan-mode plan file is exempt from 2.7 | `test-confine-to-worktree.mjs` |
-| 2.9 | That exemption is a literal match, not a general escape | `test-confine-to-worktree.mjs` |
+| 2.9 | That exemption is judged by the resolved directory: no `../`, nested directory, symlinked file, or other file type; a missing `~/.claude/plans` is accepted only for the exact spelling | `test-confine-to-worktree.mjs` |
 | 2.10 | An auto-memory note (`~/.claude/projects/<project>/memory/*.md`) is exempt from 2.7 | `test-confine-to-worktree.mjs` |
 | 2.11 | That exemption is judged by the resolved directory: no `../`, nested directory, or other file type | `test-confine-to-worktree.mjs` |
 | 2.12 | A symlinked memory directory or note does not qualify | `test-confine-to-worktree.mjs` |

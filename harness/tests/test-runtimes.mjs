@@ -37,12 +37,28 @@ try {
   for (const runtime of ['claude', 'codex', 'dsh']) {
     assert.deepEqual(await runAgent({ runtime, config: { runtimes: { [runtime]: { bin: fake } } }, cwd: temp, prompt: evil, schema }), { ok: true });
   }
-  for (const auth of [{ loggedIn: false, authMethod: 'none' }, { loggedIn: true, authMethod: 'api_key', apiProvider: 'firstParty' }]) {
-    let calls = 0;
+  // The subscription-only route reads provider overrides from process.env. Pin them for these cases:
+  // a desktop-app session exports ANTHROPIC_BASE_URL, which used to turn this test red on a clean main.
+  const paidKeys = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY'];
+  const savedPaid = Object.fromEntries(paidKeys.filter(key => key in process.env).map(key => [key, process.env[key]]));
+  try {
+    for (const key of paidKeys) delete process.env[key];
+    for (const auth of [{ loggedIn: false, authMethod: 'none' }, { loggedIn: true, authMethod: 'api_key', apiProvider: 'firstParty' }]) {
+      let calls = 0;
+      await assert.rejects(runAgent({ runtime: 'claude', cwd: temp, prompt: 'must not run',
+        config: { runtimes: { claude: { subscription_only: true } } },
+        run: async argv => { calls++; assert.deepEqual(argv.slice(1), ['auth', 'status', '--json']); return JSON.stringify(auth); } }), /subscription/);
+      assert.equal(calls, 1);
+    }
+    process.env.ANTHROPIC_BASE_URL = 'https://proxy.invalid';
+    let overrideCalls = 0;
     await assert.rejects(runAgent({ runtime: 'claude', cwd: temp, prompt: 'must not run',
       config: { runtimes: { claude: { subscription_only: true } } },
-      run: async argv => { calls++; assert.deepEqual(argv.slice(1), ['auth', 'status', '--json']); return JSON.stringify(auth); } }), /subscription/);
-    assert.equal(calls, 1);
+      run: async () => { overrideCalls++; return '{}'; } }), /provider environment overrides/);
+    assert.equal(overrideCalls, 0, 'a provider override is refused before anything runs');
+  } finally {
+    for (const key of paidKeys) delete process.env[key];
+    Object.assign(process.env, savedPaid);
   }
   const largePrompt = 'untrusted review data '.repeat(20000);
   await runAgent({ runtime: 'claude', cwd: temp, prompt: largePrompt, schema,

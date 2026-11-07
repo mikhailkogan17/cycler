@@ -49,7 +49,7 @@ check("plan mode's plan file is allowed — blocking it deadlocks planning", () 
 
 check("the plans exemption does not open a path out of it", () => {
   // The exemption is a literal ~/.claude/plans/*.md match, so it must not become a general escape.
-  assert(!run(wt, join(homedir(), ".claude", "plans", "..", "..", "evil.sh")).allowed,
+  assert(!run(wt, join(homedir(), ".claude", "plans") + "/../../evil.sh").allowed,
     "a ../ escape rode in on the plans exemption");
   assert(!run(wt, join(homedir(), ".claude", "settings.json")).allowed,
     "the exemption widened to the rest of ~/.claude");
@@ -72,13 +72,42 @@ check("an auto-memory note is allowed", () => {
 
 check("the memory exemption does not open a path out of it", () => {
   assert(!runHome(wt, join(memDir, "evil.sh")), "a non-markdown file rode in on the exemption");
-  assert(!runHome(wt, join(memDir, "..", "..", "evil.md")), "a ../ escape rode in on the exemption");
+  assert(!runHome(wt, memDir + "/../../evil.md"), "a ../ escape rode in on the exemption");
   mkdirSync(join(memDir, "sub"), { recursive: true });
   assert(!runHome(wt, join(memDir, "sub", "x.md")), "a nested directory rode in on the exemption");
   mkdirSync(join(fakeHome, ".claude", "projects", "a", "b", "memory"), { recursive: true });
   assert(!runHome(wt, join(fakeHome, ".claude", "projects", "a", "b", "memory", "x.md")), "a deeper memory directory qualified");
   mkdirSync(join(fakeHome, "memory"), { recursive: true });
   assert(!runHome(wt, join(fakeHome, "memory", "x.md")), "a memory directory outside projects qualified");
+});
+
+check("the plans exemption is judged by where the file lands", () => {
+  // A case glob's * crosses /, so a spelled-path match let ~/.claude/plans/../../x.md through.
+  // Built by concatenation: path.join would normalize the ../ away before the hook ever saw it.
+  const plans = join(fakeHome, ".claude", "plans");
+  mkdirSync(plans, { recursive: true });
+  assert(runHome(wt, join(plans, "a-plan.md")), "blocked a plan file");
+  assert(!runHome(wt, plans + "/../../evil.md"), "a ../ escape rode in on the plans exemption");
+  assert(!runHome(wt, plans + "/../settings.md"), "a ../ into ~/.claude rode in on the plans exemption");
+  mkdirSync(join(plans, "sub"), { recursive: true });
+  assert(!runHome(wt, join(plans, "sub", "x.md")), "a nested directory rode in on the plans exemption");
+  symlinkSync(join(outside, "b.ts"), join(plans, "link.md"));
+  assert(!runHome(wt, join(plans, "link.md")), "a symlinked plan file qualified");
+});
+
+check("the first plan is allowed before ~/.claude/plans exists", () => {
+  // Plan mode creates the directory with its first write; requiring it to exist would deadlock again.
+  const freshHome = mkdtempSync(join(tmpdir(), "confine-freshhome-"));
+  const runFresh = file => {
+    const payload = JSON.stringify({ cwd: wt, tool_input: { file_path: file } });
+    try { execFileSync("bash", [HOOK], { input: payload, encoding: "utf8", env: { ...process.env, HOME: freshHome } }); return true; }
+    catch { return false; }
+  };
+  try {
+    assert(runFresh(join(freshHome, ".claude", "plans", "first.md")), "blocked the first plan");
+    symlinkSync(outside, join(freshHome, ".claude"));
+    assert(!runFresh(join(freshHome, ".claude", "plans", "first.md")), "a symlinked ~/.claude carried the first plan out");
+  } finally { rmSync(freshHome, { recursive: true, force: true }); }
 });
 
 check("a symlink cannot carry a write out through the memory exemption", () => {
