@@ -33,6 +33,7 @@
 | 2.10 | An auto-memory note (`~/.claude/projects/<project>/memory/*.md`) is exempt from 2.7 | `test-confine-to-worktree.mjs` |
 | 2.11 | That exemption is judged by the resolved directory: no `../`, nested directory, or other file type | `test-confine-to-worktree.mjs` |
 | 2.12 | A symlinked memory directory or note does not qualify | `test-confine-to-worktree.mjs` |
+| 2.13 | A path is judged both as spelled (physically) and normalized (lexically); a `../` after a missing directory or through a symlink does not escape, and neither exemption accepts a directory that does not exist (except the first plan) | `test-confine-to-worktree.mjs` |
 
 2.2 exists because the hook once picked the **newest** contract in the directory (`ls -t | head -1`),
 so a concurrent run's contract judged this run's edit.

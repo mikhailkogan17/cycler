@@ -95,6 +95,22 @@ check("the plans exemption is judged by where the file lands", () => {
   assert(!runHome(wt, join(plans, "link.md")), "a symlinked plan file qualified");
 });
 
+check("a ../ after a directory that does not exist is judged by where it lands", () => {
+  // `cd` cannot resolve zz/.., so the probe used to climb past it and judge the path by the directory
+  // it started from. Found in review: this bypassed the worktree check itself, not just the exemptions.
+  const plans = join(fakeHome, ".claude", "plans");
+  assert(!runHome(wt, wt + "/zz/../../escape.ts"), "worktree/zz/../../ escaped the worktree");
+  assert(!runHome(wt, plans + "/zz/../../../evil.md"), "plans/zz/../../../ escaped through the plans exemption");
+  assert(!runHome(wt, memDir + "/zz/../../../../evil.md"), "memory/zz/../../../../ escaped through the memory exemption");
+  assert(!runHome(wt, plans + "/zz/x.md"), "a nested plans directory that does not exist qualified");
+  assert(!runHome(wt, memDir + "/zz/x.md"), "a nested memory directory that does not exist qualified");
+  assert(runHome(wt, wt + "/zz/../src/ok.ts"), "a ../ that stays inside the worktree was blocked");
+  // The other direction: lexically link/.. is the worktree, but the kernel resolves .. through the
+  // symlink, so the write lands next to the other checkout. Both readings have to pass.
+  symlinkSync(outside, join(wt, "phys-link"));
+  assert(!runHome(wt, wt + "/phys-link/../escape.ts"), "a ../ through a symlink was judged only lexically");
+});
+
 check("the first plan is allowed before ~/.claude/plans exists", () => {
   // Plan mode creates the directory with its first write; requiring it to exist would deadlock again.
   const freshHome = mkdtempSync(join(tmpdir(), "confine-freshhome-"));
