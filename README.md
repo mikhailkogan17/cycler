@@ -7,10 +7,10 @@
   </picture>
 </p>
 
-<h1 align="center">Assign an issue to a local harness. Get a gated pull request back.</h1>
+<h1 align="center">Assign a Linear issue to a local Claude Code harness. Get a gated PR back.</h1>
 
 <p align="center">
-  On your machine · your harness · your gate · no cloud, no tunnel
+  On your Mac · your repo · your gate · no hosted Cycler service or tunnel
 </p>
 
 <p align="center">
@@ -22,23 +22,46 @@
 
 ---
 
-## What is cycler
+<!-- DEMO: 2-min video/GIF -->
+<!-- Real PR produced by cycler: https://github.com/mikhailkogan17/cycler/pull/40 -->
 
-A Claude Code plugin with four parts:
+## What it does
 
-- **Linear OAuth app** — the agent 'teammate' for assigning an issue to;
-- **poller** — checks Linear for issues assigned to the agent, every 180 seconds;
-- **dispatch** — starts a background harness session in your repo, remote control on;
-- **workflow** — Contract → Branch → Implement → Audit → Verify → Commit → PR → Review →
-  Follow-ups → Cleanup.
+- **Turns a Linear delegation into a local session.** A launchd job polls every 180 seconds without an LLM call or webhook, then starts `claude --background` in your repo.
+- **Checks the work before opening a PR.** The session writes a contract, implements it, gets an independent audit, and runs your repo's gate. Three independent review lenses then inspect the PR and drive fixes.
+- **Reports back on the issue.** Cycler comments when a session starts, needs answers, opens a PR, or fails. A human decides whether to merge.
 
-You assign the issue and close the tab.<br>
-The session comments when it starts, when it has open questions, and when the PR is up.
+```mermaid
+flowchart LR
+    A[Linear issue delegated] --> B[launchd poller<br/>no LLM call]
+    B --> C[claude --background<br/>local session]
+    C --> D[contract] --> E[implement] --> F[independent audit] --> G[your gate] --> H[PR]
+    H --> I[review lenses] --> J[comments on the issue]
+```
+
+[See a PR produced by a Cycler workflow](https://github.com/mikhailkogan17/cycler/pull/40).
+
+## Quickstart
+
+**Requirements:** macOS (launchd), Node 18+, [Claude Code](https://claude.com/claude-code), and a Linear workspace where you can create an OAuth application.
+
+1. Install the plugin in a terminal:
+
+   ```bash
+   claude plugin marketplace add mikhailkogan17/cycler
+   claude plugin install cycler@cycler
+   ```
+
+2. In Linear, go to **Settings → API → Applications → New application**. Name it `Claude`; set the callback URL to `http://localhost:8787/callback`; leave webhooks off. The authorization flow requests `read`, `write`, `app:assignable`, and `app:mentionable` scopes. Copy its Client ID and Client secret. Use an OAuth application, not a personal API key: the app is the agent that issues can be delegated to.
+3. Open Claude Code **in the repo that should receive PRs** by running `claude` in its directory. At the Claude Code prompt, enter `/cycler:start`. It guides you through the config, browser authorization, gate check, and launchd setup. The command is safe to rerun.
+4. Delegate an issue to the `Claude` agent in Linear. The poller picks it up within 180 seconds; `/cycler:delegate <KEY>` in Claude Code can dispatch one immediately.
+
+**Access boundary:** anyone who can delegate an issue to this agent can run code on your machine through the dispatched session. Restrict delegation in a shared workspace.
 
 ## Alternatives
 
 The board can hand work to plenty of agents. What cycler does differently is run it with **no hosted
-component in the path** — no hub, no relay, no account beyond your own Linear app — and install as a
+Cycler component in the path** — no hub or relay — and install as a
 Claude Code plugin rather than a service you deploy and keep alive.
 
 | Project | |
@@ -52,24 +75,6 @@ Claude Code plugin rather than a service you deploy and keep alive.
 
 ---
 
-## Install
-
-**Requirements:**
-- macOS
-- Node 18+
-- [Claude Code](https://claude.com/claude-code)
-- a Linear workspace you can create an OAuth application in
-
-1. In a terminal:
-
-   ```bash
-   claude plugin marketplace add mikhailkogan17/cycler
-   claude plugin install cycler@cycler
-   claude /cycler:start
-   ```
-
-2. In Linear, assign an issue to the Claude agent.
-
 ## Usage
 ### Commands
 | command | does |
@@ -80,11 +85,11 @@ Claude Code plugin rather than a service you deploy and keep alive.
 | `/cycler:doctor` | diagnose the nine things that actually break |
 
 > [!TIP]
-> `/cycler:start` checks your setup and adds whatever is missing: the config, the Linear OAuth
-> app, and the launchd job. Safe to re-run.
+> `/cycler:start` checks your setup and guides you through the missing config, OAuth authorization,
+> and launchd job. Create the Linear OAuth application in the Quickstart first. Safe to re-run.
 
 > [!CAUTION]
-> **Anyone who can assign an issue to the agent can run code on your machine.**
+> **Anyone who can delegate an issue to the agent can run code on your machine.**
 > The issue becomes the prompt of a Claude Code session in your repo.
 > On a shared one, restrict who can assign your issues to an agent.
 
@@ -95,10 +100,26 @@ Claude Code plugin rather than a service you deploy and keep alive.
 | `/cycler:workflow-bug` | the same lifecycle in bugfix mode: the regression test comes before the fix |
 | `/cycler:workflow-research` | a question whose deliverable is a decision, not a diff. No contract, no gate |
 | `/cycler:workflow-intake` | writing a contract by hand first, then handing it to `workflow-feature`. Optional |
+| `/cycler:workflow-review` | review an existing GitHub PR independently of Linear and implementation; publish validated inline comments |
 
 > [!IMPORTANT]
-> The poller runs these for you, inside the dispatched session. You can also run one here, in the
-> **current** session, on an issue that was never assigned to the agent.
+> The poller selects a configured task or research workflow for delegated issues. You can also run
+> workflows in the **current** session; `workflow-review` reviews an existing PR directly.
+
+#### Codex, DeepSeek Harness, and standalone review
+
+Select `dispatch.runtime: codex` or `dispatch.runtime: dsh` in the existing config. Configure the
+absolute CLI path under `runtimes.<runtime>.bin`. Claude remains the default for existing installs.
+Install the shared skill entry points with `node /path/to/cycler/harness/install-skills.mjs --repo /repo`.
+Codex and dsh discover `.agents/skills`; Codex invokes them as `$cycler-workflow-feature`,
+`$cycler-workflow-bug`, `$cycler-workflow-research`, or `$cycler-workflow-intake`.
+
+`/cycler:workflow-review` (Codex: `$cycler-workflow-review`) reviews an existing GitHub PR,
+independently of Linear and implementation. Set `review.runtime` or per-lens runtimes/models for
+cross-model review. It publishes inline GitHub comments; fix rounds reply in the original threads
+with the pushed commit and verification before re-reviewing. It never merges.
+
+See [runtime setup, DSH authentication and review configuration](docs/specs/005-runtimes.md).
 
 ---
 
@@ -134,69 +155,24 @@ dispatch:
 
 ---
 
-## How it works
+## Why the gate matters
 
-```mermaid
-flowchart TD
-    A["<b>Issue assigned</b><br/>to the Claude agent in Linear"]
-    B["<b>launchd job</b> on your Mac<br/><i>one outbound poll, every 180s</i>"]
-    C["<b>claude --background</b><br/><i>in your repo, your harness</i>"]
+**Green is only evidence if the check could have gone red.** A contract names the goal, allowed paths, and acceptance checks before source edits. The audit checks the resulting diff against that contract, and the repo's gate must pass for the exact tree being committed.
 
-    subgraph S ["the session"]
-        direction LR
-        D["contract"] --> E["implement"] --> F["audit"] --> G["your gate"] --> H["PR"]
-    end
+For Claude Code sessions in workflow worktrees, four `PreToolUse` hooks enforce the process:
 
-    Z["<b>PR link + result</b><br/>commented back on the issue"]
-    M(["a human merges — cycler never does"])
+1. `require-contract.sh` blocks source edits before the issue's contract exists.
+2. `require-escape-hatch.sh` sends large changes through the full workflow instead of inline editing.
+3. `confine-to-worktree.sh` blocks writes outside the session's worktree.
+4. `require-green-gate.sh` blocks commits without a green gate for that tree.
 
-    A -.->|"poll"| B --> C --> S --> Z --> M
+The hooks apply to Claude Code's native workflow; [portable Codex and DeepSeek Harness runs](docs/specs/005-runtimes.md) run deterministic audit and gate checks before commit stages instead.
 
-    classDef board fill:#5E6AD2,stroke:#4b55a8,color:#fff
-    classDef local fill:#d97757,stroke:#b35f45,color:#fff
-    classDef phase fill:#eceef1,stroke:#9aa0a6,color:#1f2328
-    classDef merge fill:#1f883d,stroke:#186b31,color:#fff
-    class A,Z board
-    class B,C local
-    class D,E,F,G,H phase
-    class M merge
-    style S fill:none,stroke:#9aa0a6,stroke-dasharray:4 4,color:#6e7781
-```
+## Data handling
 
-> [!NOTE]
-> The poller only makes one outbound request every 180 seconds, and **never an LLM call**.
-> Every token is spent by the harness itself, **after it dispatches a session**.
-
-<details>
-<summary>Design notes</summary>
-
-- **The contract comes first.** Goal, non-goals, allowed and forbidden paths, acceptance checks as
-  exact commands. Every requirement line carries a provenance tag — `[user]`, `[paraphrase]`,
-  `[inferred]` — so a later reader can tell which constraints came from the issue and which the
-  agent invented.
-- **The rules are enforced outside the agent.** Four `PreToolUse` hooks: no edits before a contract
-  exists, no commit on a red gate, a large change goes through the full workflow instead of inline,
-  no writes outside the session's worktree. Prose can be argued with; a hook cannot.
-- **Audit is arithmetic before it is judgement.** A script checks paths, scope, secrets and whether
-  the run edited its own contract. Only then does an agent answer what a script cannot.
-- **Review runs three lenses in parallel** — bugs, test gaps, and contract (which also asks whether the
-  diff stayed inside the agreed scope). Only blocking findings get an adversarial refuter, and only the
-  lens that raised one is re-run after a fix.
-- **A dispatched session has to prove it started.** `claude --background` returns an id immediately
-  and the session can still die on its first turn; without a start marker, four dead dispatches once
-  read as four successes.
-- **Follow-ups become tracked issues**, not paragraphs in a PR description nobody reads.
-
-The rule underneath all of it: **green is only evidence if the check could have gone red.** Eight
-checks in this harness's history turned out to be incapable of failing on the input they judged — a
-predicate that returned a literal `true`, a cross-language check that matched its own doc comment, a
-Swift gate that skipped Swift, a config-driven test whose config was never loaded. Writing the check
-is not the work. Watching it go red is.
-
-Decisions are recorded as ADRs in [`docs/adr/`](docs/adr/); [`docs/specs/`](docs/specs/) is the
-behavioural spec each part is written against.
-
-</details>
+- **Network:** the poller calls Linear's OAuth and GraphQL APIs to read delegated issues and post comments. The workflow uses GitHub through `gh` for PRs and reviews. Dispatched Claude Code sessions send their prompts and repo context to Anthropic through the Claude CLI, or to the provider you configured for Claude Code. Optional Codex and DeepSeek Harness runtimes use their configured providers.
+- **Local files:** `~/.config/cycler/config.yaml` holds the Linear OAuth Client ID and secret plus repo and dispatch settings. `~/.cycler/` holds the OAuth token, processed and pending issue state, and poller logs. Contracts, worktrees, gate results, and changes are stored in the repo or its worktrees; Claude Code manages its own session data.
+- **Service:** Cycler has no hosted component, inbound webhook, or built-in telemetry. The poller makes no model call.
 
 ## Troubleshooting
 
@@ -222,19 +198,3 @@ Spec → failing test → code → gate, in that order. [`CONTRIBUTING.md`](CONT
 ## License
 
 [`MIT`](LICENSE).
-
-
-## Codex, DeepSeek Harness and standalone review
-
-Select `dispatch.runtime: codex` or `dispatch.runtime: dsh` in the existing config. Configure the
-absolute CLI path under `runtimes.<runtime>.bin`. Claude remains the default for existing installs.
-Install the shared skill entry points with `node /path/to/cycler/harness/install-skills.mjs --repo /repo`.
-Codex and dsh discover `.agents/skills`; Codex invokes them as `$cycler-workflow-feature`,
-`$cycler-workflow-bug`, `$cycler-workflow-research`, or `$cycler-workflow-intake`.
-
-`/cycler:workflow-review` (Codex: `$cycler-workflow-review`) reviews any existing GitHub PR,
-independently of Linear and implementation. Set `review.runtime` or per-lens runtimes/models for
-cross-model review. It publishes inline GitHub comments; fix rounds reply in the original threads
-with the pushed commit and verification before re-reviewing. It never merges.
-
-See [runtime setup, DSH authentication and review configuration](docs/specs/005-runtimes.md).
