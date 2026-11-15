@@ -18,7 +18,10 @@ export async function launch({ dir, issue, workflow, runtime, cwd, env = process
   const requestPath = join(folder, 'request.json');
   // Store no configuration snapshot: OAuth secrets stay in the single config file.
   write(requestPath, { workflow, task: issue.identifier, issueId: issue.identifier, cwd, runtime, statePath, unattended: true, worktree: true, ...continuation });
-  write(statePath, { status: 'starting', startedAt: Date.now() });
+  const resume = continuation.resumeState || {};
+  write(statePath, { status: 'starting', startedAt: Date.now(), stageReceipts: resume.stageReceipts || {},
+    reviewLedger: resume.reviewLedger || {}, workflowThreadId: resume.workflowThreadId || continuation.workflowThreadId || null,
+    partialReview: resume.partialReview || null });
   const fd = openSync(join(folder, 'worker.log'), 'a', 0o600);
   try {
     const child = spawn(process.execPath, [runner, '--request', requestPath], { cwd, env, detached: true, stdio: ['ignore', fd, fd] });
@@ -36,6 +39,8 @@ function continuationFor(rec, state) {
     'stopOnOpenQuestions', 'fixMax', 'gateFixMax', 'reviewFixMax', 'worktree'];
   const continuation = Object.fromEntries(keys.filter(key => key in request).map(key => [key, request[key]]));
   if (state?.workflowThreadId) continuation.workflowThreadId = state.workflowThreadId;
+  continuation.resumeState = { stageReceipts: state?.stageReceipts || {}, reviewLedger: state?.reviewLedger || {},
+    workflowThreadId: state?.workflowThreadId || request.workflowThreadId || null, partialReview: state?.partialReview || null };
   return { workflow: request.workflow, continuation };
 }
 function safeToRetry(state) {

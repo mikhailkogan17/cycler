@@ -96,6 +96,14 @@ Keep any required authentication rows in each overlay; a model overlay replaces 
 
 ## Independent GitHub review
 
+### Portable efficiency policy
+
+Portable feature/bug runs now execute branch preparation, commit/push, PR creation/reuse and cleanup in the Node controller. These are argv-based Git/gh operations with explicit failures; they do not invoke a model or merge. Contract, implementation, audit, verification, follow-up judgment and independent review remain model stages. The controller runs audit and the repository gate again before each commit and before a repeated review.
+
+Managed workers save completed stage receipts, review history, partial findings and the Codex workflow thread ID in their job state. A continuation copies that state to the next worker. Completed stages replay from receipts; audit and verify rerun, and a PR head changed outside recorded workflow commits stops as stale. The worktree and contract remain in place on a blocked run. The runner records a typed `stopReason` for quota, authentication, API, stage, scope, missing-output and stale-head failures. A failed review preserves each completed lens result and consumes no completed review slot.
+
+For a Codex portable PR, the first complete independent review uses one comprehensive Sol session. At most two repeat reviews use one comprehensive Luna session each. Every finding, including nonblocking ones, must receive an implementer disposition in the same batch before a repeat. Repeats require a new pushed head plus a fresh audit and green gate. This is a completed-review budget; quota and API interruptions keep partial evidence but do not count as completed reviews. A complex blocker can be checked separately with Sol only through an explicitly targeted review request; it does not start another full review. The standalone review command retains its configured lens and model routing.
+
 `/cycler:workflow-review` (Codex: `$cycler-workflow-review`) works without Linear, a contract,
 or an implementation run. It reviews an existing PR, using its title/body when no contract is given.
 

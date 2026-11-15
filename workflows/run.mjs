@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 // Execute the existing workflow with real CLI-backed agent/parallel/pipeline primitives.
-import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { createHash } from 'node:crypto';
 import { readConfig } from '../lib/yaml.mjs';
 import { runAgent, runtimeName, stageRoute, get, expand, execute } from '../lib/runtimes.mjs';
 import { protect } from '../lib/invariants.mjs';
 import { review, publishReplies, github } from '../harness/review.mjs';
+import { adminBranch, adminCommit, adminPR, adminCleanup } from '../lib/admin.mjs';
+import { admitReview, completeReview } from '../lib/review-policy.mjs';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export function save(path, data) {
   writeFileSync(path + '.tmp', JSON.stringify(data, null, 2), { mode: 0o600 });
@@ -17,6 +20,20 @@ export function patchState(path, data) {
   const previous = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
   save(path, { ...previous, ...data });
 }
+export function stopReason(error, stage) {
+  const message = error?.message || String(error);
+  const code = error?.code || '';
+  const type = code === 'CYCLER_QUOTA_HOLD' || /quota|usage limit|rate limit/i.test(message) ? 'quota'
+    : /auth|login|unauthorized|forbidden|401|403/i.test(message) ? 'auth'
+      : /stale|head changed|PR changed/i.test(message) ? 'stale-head'
+        : /scope|forbidden path|contract.*modif/i.test(message) ? 'scope-blocker'
+          : /missing|no result|did not return|no structured output/i.test(message) ? 'missing-output'
+            : code === 'CYCLER_STAGE_FAILURE' ? 'stage-failure' : 'api-failure';
+  return { type, stage, message, code: code || null, command: error?.command || null, at: Date.now() };
+}
+const digest = value => createHash('sha256').update(value).digest('hex');
+function receiptKey(index, label, prompt) { return `${index}:${label}:${digest(prompt).slice(0, 16)}`; }
+function stageState(path) { return path && existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {}; }
 function threadOptions(args, label) {
   const mode = get(args.config || {}, 'runtimes.codex.thread_mode') || 'stage';
   if (!['stage', 'workflow'].includes(mode)) throw new Error(`Invalid Codex thread_mode: ${mode}`);
@@ -66,7 +83,7 @@ export async function runWorkflow(args, { agent: rawInvoke = runAgent, reviewer 
   const checkSummaries = [];
   const runtime = runtimeName(config, args.runtime);
   // A request runtime is a preference; quota fallback is selected afresh for each stage.
-  if (args.statePath) patchState(args.statePath, { preferredRuntime: runtime });
+  if (args.statePath) patchState(args.statePath, { preferredRuntime: runtime, stopReason: null });
   const cwd = expand(args.cwd || get(config, 'repo.path') || process.cwd());
   const resolved = { ...args, ...(args.contractPath ? { contractPath: resolve(cwd, args.contractPath) } : {}), cwd, config, runtime, pluginRoot: ROOT, githubReview: args.githubReview !== false,
     prBase: args.prBase || get(config, 'repo.base') || 'main', branchPrefix: args.branchPrefix || get(config, 'repo.branch_prefix') || `${runtime}/` };
@@ -74,21 +91,111 @@ export async function runWorkflow(args, { agent: rawInvoke = runAgent, reviewer 
   if (enforce && contract && !existsSync(contract)) throw new Error(`Contract missing: ${contract}`);
   let assertContract = contract && enforce ? protect([contract]) : () => {};
   let assertGate = () => {};
+  let stageIndex = 0;
+  const receipts = stageState(args.statePath).stageReceipts || {};
+  const saveReceipt = (key, value) => {
+    receipts[key] = { ...value, at: Date.now() };
+    if (args.statePath) patchState(args.statePath, { stageReceipts: receipts });
+  };
+  const stale = (label, message) => {
+    const error = Object.assign(new Error(message), { code: 'CYCLER_STALE_HEAD' });
+    if (args.statePath) patchState(args.statePath, { stopReason: stopReason(error, label), failedStage: label });
+    return null;
+  };
   const agent = async (prompt, opts = {}) => {
+    const index = stageIndex++;
+    const label = opts.label || 'agent';
+    const key = receiptKey(index, label, prompt);
+    const prior = receipts[key];
+    const isRecordedLaterCommit = head => Object.values(receipts).some(entry => entry.complete && entry.result?.commitHash === head && entry.at > prior?.at);
     console.error(`cycler stage: ${opts.label}`);
     if (args.statePath) patchState(args.statePath, { stage: opts.label });
+    if ((enforce || args.resumeReceipts) && prior?.complete && !/^(audit:|verify-)/.test(label)) {
+      if (opts.adminRequest?.kind === 'branch') {
+        const tree = opts.adminRequest.worktree ? join(cwd, '.claude/worktrees', opts.adminRequest.branch.replace(/[^A-Za-z0-9._-]/g, '-')) : cwd;
+        if (existsSync(tree) && (await execute(['git', 'branch', '--show-current'], { cwd: tree })).trim() === opts.adminRequest.branch) {
+          if (enforce) assertGate = protect([join(tree, '.claude/harness/gate.sh'), join(ROOT, 'harness/gate.sh'), join(ROOT, 'harness/gate.default.sh')]);
+          return prior.result;
+        }
+      } else if (opts.reviewRequest) {
+        const actual = github(opts.reviewRequest.cwd).pr(opts.reviewRequest.pr).headRefOid;
+        if (actual === prior.result?.head || isRecordedLaterCommit(actual)) return prior.result;
+        return stale(label, `PR head changed outside recorded workflow after ${label}`);
+      } else if (opts.adminRequest?.kind === 'commit') {
+        const actual = (await execute(['git', 'rev-parse', 'HEAD'], { cwd: opts.cwd || cwd })).trim();
+        if (actual === prior.result?.commitHash || isRecordedLaterCommit(actual)) return prior.result;
+        return stale(label, `Commit head changed outside recorded workflow after ${label}`);
+      } else if (opts.adminRequest?.kind === 'pr') {
+        const actual = github(opts.cwd || cwd).pr(prior.result?.prUrl).headRefOid;
+        const head = (await execute(['git', 'rev-parse', 'HEAD'], { cwd: opts.cwd || cwd })).trim();
+        if (actual === head || isRecordedLaterCommit(head)) return prior.result;
+        return stale(label, `PR head changed outside recorded workflow after ${label}`);
+      } else if (opts.adminRequest?.kind === 'cleanup') {
+        return prior.result;
+      } else {
+        if (prior.result?.contractPath) {
+          contract = prior.result.contractPath;
+          if (enforce) { if (!existsSync(contract)) throw new Error(`Contract missing on resume: ${contract}`); assertContract = protect([contract]); }
+        }
+        return prior.result;
+      }
+    }
+    if (opts.adminRequest && enforce) {
+      try {
+        if (enforce && !['branch', 'cleanup'].includes(opts.adminRequest.kind)) { assertContract(); assertGate(); }
+        let result;
+        const request = opts.adminRequest;
+        if (request.kind === 'branch') result = await adminBranch({ cwd, branch: request.branch, base: request.base, worktree: request.worktree, config });
+        else if (request.kind === 'commit') {
+          if (!contract) throw new Error('No contract recorded before commit');
+          const env = { ...process.env, CONTRACT_PATH: resolve(cwd, contract), CLAUDE_PROJECT_DIR: opts.cwd || cwd, AUDIT_NO_CACHE: '1' };
+          await execute(['bash', join(ROOT, 'harness/audit.sh'), '--base', resolved.prBase], { cwd: opts.cwd || cwd, env });
+          await execute(['bash', join(ROOT, 'harness/gate.sh'), '--fast', '--base', resolved.prBase], { cwd: opts.cwd || cwd, env });
+          result = await adminCommit({ cwd: opts.cwd || cwd, files: request.files, issueId: request.issueId, runtime: request.runtime, label: request.commitLabel });
+        } else if (request.kind === 'pr') result = await adminPR({ cwd: opts.cwd || cwd, base: request.base, contract: request.contract, issueId: request.issueId });
+        else if (request.kind === 'cleanup') result = await adminCleanup({ cwd: request.repoRoot, worktree: request.worktree, lock: request.lock, removeWorktree: request.removeWorktree });
+        else throw new Error(`Unknown admin stage: ${request.kind}`);
+        saveReceipt(key, { complete: true, result });
+        if (enforce && request.kind === 'branch' && result?.ok) {
+          const tree = request.worktree ? join(cwd, '.claude/worktrees', request.branch.replace(/[^A-Za-z0-9._-]/g, '-')) : cwd;
+          assertGate = protect([join(tree, '.claude/harness/gate.sh'), join(ROOT, 'harness/gate.sh'), join(ROOT, 'harness/gate.default.sh')]);
+        }
+        return result;
+      } catch (error) {
+        const stop = stopReason(error, label);
+        if (args.statePath) patchState(args.statePath, { stopReason: stop, failedStage: label });
+        console.error(`${label}: ${error.message}`);
+        return null;
+      }
+    }
     if (opts.reviewRequest) {
       try {
-        const result = await reviewer({ ...opts.reviewRequest, config, publish: true,
+        const request = opts.reviewRequest;
+        const reviewState = stageState(args.statePath).reviewLedger || {};
+        const history = reviewState[request.pr] || [];
+        const actualHead = enforce ? github(request.cwd).pr(request.pr).headRefOid : null;
+        const admission = enforce ? admitReview({ history, round: request.reviewRound, head: actualHead, previousReview: request.previousReview }) : null;
+        if (admission?.repeat) {
+          const env = { ...process.env, CONTRACT_PATH: resolve(cwd, contract), CLAUDE_PROJECT_DIR: request.cwd, AUDIT_NO_CACHE: '1' };
+          await execute(['bash', join(ROOT, 'harness/audit.sh'), '--base', resolved.prBase], { cwd: request.cwd, env });
+          await execute(['bash', join(ROOT, 'harness/gate.sh'), '--fast', '--base', resolved.prBase], { cwd: request.cwd, env });
+        }
+        const reviewModel = enforce && request.runtime === 'codex' ? admission.model : undefined;
+        const result = await reviewer({ ...request, config, publish: true, lenses: ['comprehensive'], reviewModel,
           agent: request => invoke({ ...request, ...threadOptions(threadArgs, reviewLabel(request)) }) });
+        reviewState[request.pr] = completeReview(history, result, reviewModel || 'configured');
+        if (args.statePath) patchState(args.statePath, { reviewLedger: reviewState });
+        saveReceipt(key, { complete: true, result });
         checkSummaries.push({ stage: opts.label, approved: result.approved, published: result.published,
           head: result.head, fatal: result.fatal, fatalReason: result.fatalReason, blockingIssues: result.blockingIssues,
           findings: result.confirmed?.map(f => ({ severity: f.severity, title: f.title })) });
         return result;
       }
       catch (err) {
+        if (args.statePath) patchState(args.statePath, { stopReason: stopReason(err, label), failedStage: label,
+          partialReview: { head: err.reviewHead, findings: err.reviewFindings || [] } });
         checkSummaries.push({ stage: opts.label, approved: false, fatal: true, fatalReason: err.message });
-        return { approved: false, fatal: true, fatalReason: err.message };
+        return { approved: false, fatal: true, fatalReason: err.message, stopReason: stopReason(err, label) };
       }
     }
     const route = stageRoute(config, opts.label || '', runtime, opts.model);
@@ -106,9 +213,10 @@ export async function runWorkflow(args, { agent: rawInvoke = runAgent, reviewer 
         const api = github(opts.cwd || cwd);
         await publishReplies({ api, pr: api.pr(pr), commit, replies: drafted.replies });
         checkSummaries.push({ stage: opts.label, replied: true, commit });
-        return { replied: true };
+        const result = { replied: true }; saveReceipt(key, { complete: true, result }); return result;
       } catch (err) {
         checkSummaries.push({ stage: opts.label, replied: false, error: err.message });
+        if (args.statePath) patchState(args.statePath, { stopReason: stopReason(err, label), failedStage: label });
         console.error(`Replies failed: ${err.message}`); return { replied: false };
       }
     }
@@ -128,6 +236,7 @@ export async function runWorkflow(args, { agent: rawInvoke = runAgent, reviewer 
         ? `Workflow stage: ${opts.label}. Follow the current stage instructions below.\nIndependent check results (controller summary): ${JSON.stringify(checkSummaries)}\n\n${prompt}` : prompt;
       const result = await invoke({ ...route, config, cwd: opts.cwd || cwd, prompt: stagePrompt, schema: opts.schema, label: opts.label,
         ...session });
+      if (result == null) throw new Error(`${label} returned no result`);
       if (grouped && session.ephemeral) checkSummaries.push({ stage: opts.label, clean: result?.clean,
         checks: result?.checks?.map(c => ({ name: c.name, passed: c.passed })), blockers: result?.blockers });
       if (result?.contractPath) {
@@ -139,15 +248,23 @@ export async function runWorkflow(args, { agent: rawInvoke = runAgent, reviewer 
         assertGate = protect([join(tree, '.claude/harness/gate.sh'), join(ROOT, 'harness/gate.sh'), join(ROOT, 'harness/gate.default.sh')]);
       }
       if (enforce && opts.label !== 'followups' && opts.label !== 'cleanup') { assertContract(); assertGate(); }
+      saveReceipt(key, { complete: true, result });
       return result;
     }
-    catch (err) { console.error(`${opts.label}: ${err.message}`); return null; }
+    catch (err) {
+      if (args.statePath) patchState(args.statePath, { stopReason: stopReason(err, label), failedStage: label });
+      console.error(`${opts.label}: ${err.message}`); return null;
+    }
   };
   const src = readFileSync(join(ROOT, 'workflows/task-orchestration.js'), 'utf8').replace(/^export const meta/m, 'const meta');
   const fn = new (Object.getPrototypeOf(async function () {}).constructor)('args', 'agent', 'parallel', 'pipeline', 'phase', 'log', 'budget', src);
   const result = await fn(resolved, agent, tasks => Promise.all(tasks.map(t => t())),
     (items, ...stages) => Promise.all(items.map(async (item, i) => { let v = item; for (const stage of stages) v = await stage(v, item, i); return v; })),
     phase => console.error(`cycler phase: ${phase}`), msg => console.error(msg), { total: null, remaining: () => Infinity });
+  if (result?.status === 'blocked' && args.statePath && !stageState(args.statePath).stopReason) {
+    const type = result.stage === 'audit' ? 'scope-blocker' : result.fatal ? 'missing-output' : 'stage-failure';
+    patchState(args.statePath, { stopReason: { type, stage: result.stage, message: result.blockedReason || 'Workflow blocked', at: Date.now() } });
+  }
   if (runtime === 'codex' && get(config, 'runtimes.codex.thread_mode') === 'workflow' && threadArgs.workflowThreadId) {
     try {
       await invoke({ ...stageRoute(config, 'workflow-summary', runtime), config, cwd, readOnly: true,
@@ -174,6 +291,11 @@ export async function runSkill({ workflow, task, issueId, cwd, runtime, config =
       task = `${issueId}\n${description}`;
     }
     if (name === 'workflow-bug') task = `FIX MODE: read ${ROOT}/harness/modes/fix.md; regression test before implementation.\n${task}`;
+    if (!options.statePath) {
+      const dir = join(cwd, '.claude/worktrees/.cycler-runs');
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      options.statePath = join(dir, `${digest(`${name}:${issueId || task}`).slice(0, 24)}.json`);
+    }
     return runWorkflow({ ...options, task, issueId, cwd, runtime, config });
   }
   const text = await invoke({ runtime, config, cwd,
@@ -200,7 +322,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     request = values.request ? JSON.parse(readFileSync(values.request, 'utf8')) : { ...values, contractPath: values.contract, noCommit: values['no-commit'] };
     const config = request.config || readConfig();
     request.cwd ||= expand(get(config, 'repo.path') || process.cwd());
-    if (request.statePath) save(request.statePath, { status: 'running', pid: process.pid, startedAt: Date.now() });
+    if (request.statePath) patchState(request.statePath, { status: 'running', pid: process.pid, startedAt: Date.now(), stopReason: null });
     const result = await runSkill({ ...request, config });
     await syncLinear(result, request.cwd);
     if (request.statePath) patchState(request.statePath, { status: result.status === 'blocked' ? 'failed' : 'completed', result, finishedAt: Date.now() });
