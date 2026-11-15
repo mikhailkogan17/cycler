@@ -266,6 +266,7 @@ export async function review({ cwd, pr: reference, config = {}, runtime, contrac
 }
 export async function standaloneReview(options) {
   const { cwd, pr: reference, config = {}, runtime, api = github(cwd) } = options;
+  if (options.publish !== true) return review({ ...options, api, publish: false });
   const pr = api.pr(reference);
   return withReviewLedger(cwd, pr.url, async history => {
     if (history.length) {

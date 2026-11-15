@@ -415,6 +415,7 @@ const BRANCH_SCHEMA = {
     // it this run's job to remove it. Absent in worktree mode, where git's own "branch already checked
     // out" refusal is the lock and there is nothing to release.
     lockTaken: { type: 'boolean' },
+    baselinePaths: { type: 'array', items: { type: 'string' } },
   },
   required: ['branch', 'ok'],
 }
@@ -1452,7 +1453,7 @@ async function commitStage(label) {
 4. Push: git push -u origin HEAD  (a failed push is a failure — report it).
 
 Return commitHash + committedFiles + message + pushed (pushed = true ONLY if the push succeeded).`,
-    { ...(args.runtime ? { cwd: runCwd, adminRequest: { kind: 'commit', files: [...taskFiles], issueId, runtime: args.runtime, commitLabel: label } } : {}), schema: COMMIT_SCHEMA, label: 'committer:' + label, phase: 'Commit', model: modelFor('commit') }
+    { ...(args.runtime ? { cwd: runCwd, adminRequest: { kind: 'commit', files: [...taskFiles], issueId, runtime: args.runtime, commitLabel: label, baselinePaths: branchRes.baselinePaths || [] } } : {}), schema: COMMIT_SCHEMA, label: 'committer:' + label, phase: 'Commit', model: modelFor('commit') }
   )
 }
 

@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync, mkdirSync, chmodSync, readFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { adminBranch, adminCommit, adminCleanup, adminPR } from '../../lib/admin.mjs';
-import { runWorkflow, save, stopReason, resumeRequest } from '../../workflows/run.mjs';
+import { runWorkflow, save, stopReason, resumeRequest, claimResumeRequest } from '../../workflows/run.mjs';
 import { makeResponder } from './stubs.mjs';
 
 const root = mkdtempSync(join(tmpdir(), 'cycler-native-admin-'));
@@ -48,12 +48,21 @@ try {
   const heldCleanup = await adminCleanup({ cwd: source, worktree: tree, removeWorktree: true });
   assert.equal(heldCleanup.worktreeRemoved, false, 'untracked user asset keeps worktree');
   rmSync(join(tree, 'user-asset.png'));
+  writeFileSync(join(source, '.git/info/exclude'), 'node_modules/\n');
+  mkdirSync(join(tree, 'node_modules')); writeFileSync(join(tree, 'node_modules/fixture'), 'dependency');
   const again = await adminBranch({ cwd: source, branch: 'codex/TEST-1', base: 'main', worktree: true });
   assert.equal(again.created, false); assert.equal(git(tree, 'rev-parse', 'HEAD'), renameCommit.commitHash);
   const cleanup = await adminCleanup({ cwd: source, worktree: tree, removeWorktree: true });
   assert.equal(cleanup.worktreeRemoved, true);
   assert.equal(git(source, 'branch', '--show-current'), 'main');
   console.log('PASS deterministic branch, commit, push, PR reuse and cleanup with no model invocation or merge');
+
+  writeFileSync(join(source, 'code.txt'), 'pre-existing user edit\n');
+  const shared = await adminBranch({ cwd: source, branch: 'codex/shared-fixture', base: 'main', worktree: false });
+  assert(shared.baselinePaths.includes('code.txt'));
+  await assert.rejects(adminCommit({ cwd: source, files: ['code.txt'], baselinePaths: shared.baselinePaths, label: 'initial' }), /pre-existing shared-tree/);
+  await adminCleanup({ cwd: source, lock: join(source, '.claude/worktrees/.task-shared-tree.lock'), removeWorktree: false });
+  console.log('PASS shared-tree baseline prevents committing a pre-existing user edit');
 
   // A stopped stage resumes from its saved outputs without replaying earlier agent work.
   const statePath = join(root, 'state.json'); save(statePath, { status: 'running' });
@@ -78,6 +87,9 @@ try {
   save(join(job, 'request.json'), { statePath: jobState, task: 'fixture task', workflow: 'workflow-feature' });
   save(jobState, { status: 'failed', workflowThreadId: 'thread-1', stageReceipts: { done: true } });
   assert.equal(resumeRequest(jobState).workflowThreadId, 'thread-1');
+  const claim = claimResumeRequest(jobState);
+  assert.throws(() => claimResumeRequest(jobState), /Resume already running/);
+  claim.release();
   save(jobState, { status: 'running' });
   assert.throws(() => resumeRequest(jobState), /failed job state/);
   console.log('PASS explicit managed resume refuses a running job and preserves thread identity');

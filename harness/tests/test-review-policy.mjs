@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { admitReview, completeReview, withReviewLedger, readReviewLedger } from '../../lib/review-policy.mjs';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { admitReview, completeReview, withReviewLedger, readReviewLedger, reviewLedgerFile } from '../../lib/review-policy.mjs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { standaloneReview } from '../review.mjs';
 const h1 = 'a'.repeat(40), h2 = 'b'.repeat(40), h3 = 'c'.repeat(40), h4 = 'd'.repeat(40);
 const first = admitReview({ history: [], round: 1, head: h1 });
 assert.deepEqual(first, { model: 'gpt-6.1-sol', repeat: false });
@@ -29,5 +30,14 @@ try {
   assert.equal(readReviewLedger(repo, pr).length, 1);
   assert.equal((await withReviewLedger(repo, pr, async prior => ({ result: prior[0].model }))), 'gpt-6.1-sol');
   assert.equal(readReviewLedger(repo, pr).length, 1, 'read-only return does not spend another slot');
+  const lock = `${reviewLedgerFile(repo, pr)}.lock`;
+  mkdirSync(lock); writeFileSync(join(lock, 'pid'), '99999999');
+  assert.equal(await withReviewLedger(repo, pr, async () => ({ result: 'resumed' })), 'resumed');
+  const api = { pr: () => ({ state: 'OPEN', url: pr, number: 1, headRefOid: h1, baseRefOid: h2, title: 'Fixture', body: '' }),
+    list: () => [{ filename: 'fixture.js', patch: '@@ -0,0 +1 @@\n+fixture', changes: 1 }],
+    api: () => { throw new Error('preview must never publish'); } };
+  const preview = await standaloneReview({ cwd: repo, pr, runtime: 'codex', publish: false, snapshot: false, api,
+    source: () => 'fixture\n', agent: async () => ({ findings: [] }) });
+  assert.equal(preview.published, false);
 } finally { rmSync(repo, { recursive: true, force: true }); }
 console.log('PASS persistent review budget, head admission and interrupted-review accounting');

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Execute the existing workflow with real CLI-backed agent/parallel/pipeline primitives.
-import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -45,6 +45,23 @@ export function resumeRequest(path) {
   const request = JSON.parse(readFileSync(join(dirname(statePath), 'request.json'), 'utf8'));
   if (resolve(request.statePath) !== statePath) throw new Error('Resume state does not match the job request');
   return { ...request, workflowThreadId: prior.workflowThreadId || request.workflowThreadId };
+}
+export function claimResumeRequest(path) {
+  const statePath = resolve(path), lock = `${statePath}.resume-lock`;
+  try { mkdirSync(lock); } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    let pid;
+    try { pid = Number(readFileSync(join(lock, 'pid'), 'utf8')); } catch { /* owner may be starting */ }
+    if (Number.isSafeInteger(pid) && pid > 0) {
+      try { process.kill(pid, 0); throw new Error(`Resume already running for ${statePath}`); }
+      catch (check) { if (check.code !== 'ESRCH') throw check; }
+    } else if (Date.now() - statSync(lock).mtimeMs < 60_000) throw new Error(`Resume lock is new and owner is unknown: ${lock}`);
+    rmSync(lock, { recursive: true, force: true }); mkdirSync(lock);
+  }
+  try {
+    writeFileSync(join(lock, 'pid'), String(process.pid), { mode: 0o600 });
+    return { request: resumeRequest(statePath), release: () => rmSync(lock, { recursive: true, force: true }) };
+  } catch (error) { rmSync(lock, { recursive: true, force: true }); throw error; }
 }
 function threadOptions(args, label) {
   const mode = get(args.config || {}, 'runtimes.codex.thread_mode') || 'stage';
@@ -163,7 +180,8 @@ export async function runWorkflow(args, { agent: rawInvoke = runAgent, reviewer 
         if (enforce && !['branch', 'cleanup'].includes(opts.adminRequest.kind)) { assertContract(); assertGate(); }
         let result;
         const request = opts.adminRequest;
-        if (request.kind === 'branch') result = await adminBranch({ cwd, branch: request.branch, base: request.base, worktree: request.worktree, config });
+        if (request.kind === 'branch') result = await adminBranch({ cwd, branch: request.branch, base: request.base, worktree: request.worktree,
+          config, baselinePaths: prior?.result?.baselinePaths });
         else if (request.kind === 'commit') {
           if (!contract) throw new Error('No contract recorded before commit');
           const env = { ...process.env, CONTRACT_PATH: resolve(cwd, contract), CLAUDE_PROJECT_DIR: opts.cwd || cwd, AUDIT_NO_CACHE: '1' };
@@ -174,7 +192,7 @@ export async function runWorkflow(args, { agent: rawInvoke = runAgent, reviewer 
           const after = (await fingerprint(opts.cwd || cwd)).trim();
           if (before !== after) throw new Error('Tree changed during audit/gate; refusing commit');
           result = await adminCommit({ cwd: opts.cwd || cwd, files: request.files, issueId: request.issueId, runtime: request.runtime,
-            label: request.commitLabel, expectedFingerprint: after, fingerprint });
+            label: request.commitLabel, expectedFingerprint: after, fingerprint, baselinePaths: request.baselinePaths });
         } else if (request.kind === 'pr') result = await adminPR({ cwd: opts.cwd || cwd, base: request.base, contract: request.contract, issueId: request.issueId });
         else if (request.kind === 'cleanup') result = await adminCleanup({ cwd: request.repoRoot, worktree: request.worktree, lock: request.lock, removeWorktree: request.removeWorktree });
         else throw new Error(`Unknown admin stage: ${request.kind}`);
@@ -349,10 +367,11 @@ export async function syncLinear(result, cwd) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const { values } = parseArgs({ options: { request: { type: 'string' }, 'resume-job': { type: 'string' }, workflow: { type: 'string' }, task: { type: 'string' },
     cwd: { type: 'string' }, runtime: { type: 'string' }, contract: { type: 'string' }, 'no-commit': { type: 'boolean' } } });
-  let request;
+  let request, releaseResume;
   try {
     if (values['resume-job']) {
-      request = resumeRequest(values['resume-job']);
+      const claim = claimResumeRequest(values['resume-job']);
+      request = claim.request; releaseResume = claim.release;
     } else request = values.request ? JSON.parse(readFileSync(values.request, 'utf8')) : { ...values, contractPath: values.contract, noCommit: values['no-commit'] };
     const config = request.config || readConfig();
     request.cwd ||= expand(get(config, 'repo.path') || process.cwd());
@@ -365,5 +384,5 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   } catch (err) {
     if (request?.statePath) patchState(request.statePath, { status: 'failed', error: err.message, finishedAt: Date.now() });
     console.error(err.stack || err.message); process.exitCode = 1;
-  }
+  } finally { releaseResume?.(); }
 }

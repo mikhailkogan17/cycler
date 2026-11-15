@@ -71,6 +71,7 @@ export async function managedPoll({ dir, issues, runtime, cwd, config, workflowF
       if (!state || ['starting', 'running'].includes(state.status)) {
         if (isAlive(rec.pid)) { running++; continue; }
         state = { ...state, status: 'failed', error: 'Worker exited without a terminal result' };
+        if (rec.statePath) write(rec.statePath, state);
       }
       if (state.status === 'completed') {
         if (!rec.announced) rec.announced = await announce(issueId, `${rec.runtime} workflow completed${state.result?.pr?.prUrl ? `: ${state.result.pr.prUrl}` : '.'}`);
