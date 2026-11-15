@@ -266,16 +266,24 @@ export async function review({ cwd, pr: reference, config = {}, runtime, contrac
 }
 export async function standaloneReview(options) {
   const { cwd, pr: reference, config = {}, runtime, api = github(cwd) } = options;
-  if (options.publish !== true) return review({ ...options, api, publish: false });
   const pr = api.pr(reference);
   return withReviewLedger(cwd, pr.url, async history => {
     if (history.length) {
-      if (history[0].head === pr.headRefOid && history[0].result) return { result: history[0].result };
+      if (history[0].head === pr.headRefOid && history[0].result) {
+        if (options.publish === true && history[0].result.published === false) {
+          const files = api.list(`repos/${prRepository(pr.url)}/pulls/${pr.number}/files`);
+          const threads = await publishReview({ api, pr, findings: history[0].result.confirmed,
+            notes: history[0].result.notes, source: gitSources(cwd, pr, files) });
+          const result = { ...history[0].result, threads, published: true };
+          return { result, history: [{ ...history[0], result, threads }, ...history.slice(1)] };
+        }
+        return { result: history[0].result };
+      }
       throw new Error('This PR already has an initial Cycler review; repeat reviews require the feature workflow batch, green gate and Luna budget');
     }
     const codex = runtimeName(config, runtime) === 'codex';
-    const result = await review({ ...options, api, publish: true, lenses: ['comprehensive'], reviewModel: codex ? 'gpt-6.1-sol' : undefined });
-    return { result, history: completeReview([], result, codex ? 'gpt-6.1-sol' : 'configured') };
+    const result = await review({ ...options, api, publish: options.publish === true, lenses: ['comprehensive'], reviewModel: codex ? 'gpt-6.1-sol' : undefined });
+    return { result, history: completeReview([], result, codex ? 'gpt-6.1-sol' : 'configured', { allowUnpublished: true }) };
   });
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

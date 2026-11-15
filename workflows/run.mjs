@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Execute the existing workflow with real CLI-backed agent/parallel/pipeline primitives.
-import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { readConfig } from '../lib/yaml.mjs';
 import { runAgent, runtimeName, stageRoute, get, expand, execute } from '../lib/runtimes.mjs';
 import { protect } from '../lib/invariants.mjs';
-import { review, standaloneReview, publishReplies, github } from '../harness/review.mjs';
+import { review, standaloneReview, publishReview, publishReplies, gitSources, github, prRepository } from '../harness/review.mjs';
 import { adminBranch, adminCommit, adminPR, adminCleanup } from '../lib/admin.mjs';
 import { admitReview, completeReview, withReviewLedger, readReviewLedger } from '../lib/review-policy.mjs';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -50,13 +50,7 @@ export function claimResumeRequest(path) {
   const statePath = resolve(path), lock = `${statePath}.resume-lock`;
   try { mkdirSync(lock); } catch (error) {
     if (error.code !== 'EEXIST') throw error;
-    let pid;
-    try { pid = Number(readFileSync(join(lock, 'pid'), 'utf8')); } catch { /* owner may be starting */ }
-    if (Number.isSafeInteger(pid) && pid > 0) {
-      try { process.kill(pid, 0); throw new Error(`Resume already running for ${statePath}`); }
-      catch (check) { if (check.code !== 'ESRCH') throw check; }
-    } else if (Date.now() - statSync(lock).mtimeMs < 60_000) throw new Error(`Resume lock is new and owner is unknown: ${lock}`);
-    rmSync(lock, { recursive: true, force: true }); mkdirSync(lock);
+    throw new Error(`Resume already running or left a lock for ${statePath}; inspect ${lock}`);
   }
   try {
     writeFileSync(join(lock, 'pid'), String(process.pid), { mode: 0o600 });
@@ -216,7 +210,17 @@ export async function runWorkflow(args, { agent: rawInvoke = runAgent, reviewer 
         const perform = async history => {
           const actualHead = enforce ? github(request.cwd).pr(request.pr).headRefOid : null;
           const completed = history[request.reviewRound - 1];
-          if (enforce && completed?.result && completed.head === actualHead) return { result: completed.result };
+          if (enforce && completed?.result && completed.head === actualHead) {
+            if (completed.result.published === false) {
+              const api = github(request.cwd), pr = api.pr(request.pr);
+              const files = api.list(`repos/${prRepository(pr.url)}/pulls/${pr.number}/files`);
+              const threads = await publishReview({ api, pr, findings: completed.result.confirmed,
+                notes: completed.result.notes, source: gitSources(request.cwd, pr, files) });
+              const result = { ...completed.result, published: true, threads };
+              return { result, history: history.map((entry, i) => i === request.reviewRound - 1 ? { ...entry, result, threads } : entry) };
+            }
+            return { result: completed.result };
+          }
           const admission = enforce ? admitReview({ history, round: request.reviewRound, head: actualHead, previousReview: request.previousReview }) : null;
           if (admission?.repeat) {
             const env = { ...process.env, CONTRACT_PATH: resolve(cwd, contract), CLAUDE_PROJECT_DIR: request.cwd, AUDIT_NO_CACHE: '1' };

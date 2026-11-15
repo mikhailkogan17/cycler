@@ -32,12 +32,17 @@ try {
   assert.equal(readReviewLedger(repo, pr).length, 1, 'read-only return does not spend another slot');
   const lock = `${reviewLedgerFile(repo, pr)}.lock`;
   mkdirSync(lock); writeFileSync(join(lock, 'pid'), '99999999');
-  assert.equal(await withReviewLedger(repo, pr, async () => ({ result: 'resumed' })), 'resumed');
-  const api = { pr: () => ({ state: 'OPEN', url: pr, number: 1, headRefOid: h1, baseRefOid: h2, title: 'Fixture', body: '' }),
+  await assert.rejects(withReviewLedger(repo, pr, async () => ({ result: 'resumed' })), /Review lock exists/);
+  const previewPr = 'https://github.com/example/repo/pull/2';
+  const api = { pr: () => ({ state: 'OPEN', url: previewPr, number: 2, headRefOid: h1, baseRefOid: h2, title: 'Fixture', body: '' }),
     list: () => [{ filename: 'fixture.js', patch: '@@ -0,0 +1 @@\n+fixture', changes: 1 }],
     api: () => { throw new Error('preview must never publish'); } };
-  const preview = await standaloneReview({ cwd: repo, pr, runtime: 'codex', publish: false, snapshot: false, api,
+  const preview = await standaloneReview({ cwd: repo, pr: previewPr, runtime: 'codex', publish: false, snapshot: false, api,
     source: () => 'fixture\n', agent: async () => ({ findings: [] }) });
   assert.equal(preview.published, false);
+  assert.equal(readReviewLedger(repo, previewPr).length, 1);
+  const cachedPreview = await standaloneReview({ cwd: repo, pr: previewPr, runtime: 'codex', publish: false, snapshot: false, api,
+    source: () => 'fixture\n', agent: async () => { throw new Error('preview must reuse completed result'); } });
+  assert.equal(cachedPreview.published, false);
 } finally { rmSync(repo, { recursive: true, force: true }); }
 console.log('PASS persistent review budget, head admission and interrupted-review accounting');
