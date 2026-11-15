@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { readConfig } from '../lib/yaml.mjs';
 import { get, runtimeName, stageRoute, runAgent, validate } from '../lib/runtimes.mjs';
+import { withReviewLedger, completeReview } from '../lib/review-policy.mjs';
 
 export const FINDINGS = { type: 'object', additionalProperties: false, required: ['findings'], properties: {
   findings: { type: 'array', maxItems: 10, items: { type: 'object', additionalProperties: false,
@@ -263,6 +264,19 @@ export async function review({ cwd, pr: reference, config = {}, runtime, contrac
     if (temp) { try { git(['worktree', 'remove', '--force', dir]); } finally { rmSync(temp, { recursive: true, force: true }); } }
   }
 }
+export async function standaloneReview(options) {
+  const { cwd, pr: reference, config = {}, runtime, api = github(cwd) } = options;
+  const pr = api.pr(reference);
+  return withReviewLedger(cwd, pr.url, async history => {
+    if (history.length) {
+      if (history[0].head === pr.headRefOid && history[0].result) return { result: history[0].result };
+      throw new Error('This PR already has an initial Cycler review; repeat reviews require the feature workflow batch, green gate and Luna budget');
+    }
+    const codex = runtimeName(config, runtime) === 'codex';
+    const result = await review({ ...options, api, publish: true, lenses: ['comprehensive'], reviewModel: codex ? 'gpt-6.1-sol' : undefined });
+    return { result, history: completeReview([], result, codex ? 'gpt-6.1-sol' : 'configured') };
+  });
+}
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const { values } = parseArgs({ options: { pr: { type: 'string' }, cwd: { type: 'string', default: process.cwd() },
@@ -276,6 +290,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       const api = github(values.cwd);
       await publishReplies({ api, pr: api.pr(values.pr), commit: values.commit, replies: JSON.parse(readFileSync(values.replies, 'utf8')) });
       console.log(JSON.stringify({ replied: true }));
-    } else console.log(JSON.stringify(await review({ ...values, config: readConfig() })));
+    } else console.log(JSON.stringify(await standaloneReview({ ...values, config: readConfig() })));
   } catch (err) { console.error(JSON.stringify({ error: err.message, head: err.reviewHead, reviewFindings: err.reviewFindings })); process.exitCode = 1; }
 }

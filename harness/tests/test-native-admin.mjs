@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync, mkdirSync, chmodSync, readFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { adminBranch, adminCommit, adminCleanup, adminPR } from '../../lib/admin.mjs';
-import { runWorkflow, save, stopReason } from '../../workflows/run.mjs';
+import { runWorkflow, save, stopReason, resumeRequest } from '../../workflows/run.mjs';
 import { makeResponder } from './stubs.mjs';
 
 const root = mkdtempSync(join(tmpdir(), 'cycler-native-admin-'));
@@ -38,8 +38,18 @@ try {
     await adminPR({ cwd: tree, base: 'main', contract, issueId: 'TEST-1' });
     assert.equal(readFileSync(marker, 'utf8').trim(), 'created', 'PR creation is idempotent');
   } finally { process.env.PATH = oldPath; }
+  git(tree, 'mv', 'code.txt', 'renamed.txt');
+  await assert.rejects(adminCommit({ cwd: tree, files: ['code.txt', 'renamed.txt'], issueId: 'TEST-1', runtime: 'codex',
+    label: 'fix', expectedFingerprint: 'green-tree', fingerprint: async () => 'changed-tree' }), /Tree changed after green gate/);
+  assert.equal(git(tree, 'rev-parse', 'HEAD'), commit.commitHash, 'changed content cannot reuse gate evidence');
+  const renameCommit = await adminCommit({ cwd: tree, files: ['code.txt', 'renamed.txt'], issueId: 'TEST-1', runtime: 'codex', label: 'fix' });
+  assert(renameCommit.committedFiles.includes('code.txt') && renameCommit.committedFiles.includes('renamed.txt'));
+  writeFileSync(join(tree, 'user-asset.png'), 'keep me');
+  const heldCleanup = await adminCleanup({ cwd: source, worktree: tree, removeWorktree: true });
+  assert.equal(heldCleanup.worktreeRemoved, false, 'untracked user asset keeps worktree');
+  rmSync(join(tree, 'user-asset.png'));
   const again = await adminBranch({ cwd: source, branch: 'codex/TEST-1', base: 'main', worktree: true });
-  assert.equal(again.created, false); assert.equal(git(tree, 'rev-parse', 'HEAD'), commit.commitHash);
+  assert.equal(again.created, false); assert.equal(git(tree, 'rev-parse', 'HEAD'), renameCommit.commitHash);
   const cleanup = await adminCleanup({ cwd: source, worktree: tree, removeWorktree: true });
   assert.equal(cleanup.worktreeRemoved, true);
   assert.equal(git(source, 'branch', '--show-current'), 'main');
@@ -63,4 +73,12 @@ try {
   assert.equal(counts.get('contract'), 1); assert.equal(counts.get('implementer'), 1);
   assert.equal(counts.get('verify-gate'), 2);
   console.log('PASS failed-stage resume reuses completed contract and implementation outputs');
+  const job = join(root, 'job'); mkdirSync(job);
+  const jobState = join(job, 'state.json');
+  save(join(job, 'request.json'), { statePath: jobState, task: 'fixture task', workflow: 'workflow-feature' });
+  save(jobState, { status: 'failed', workflowThreadId: 'thread-1', stageReceipts: { done: true } });
+  assert.equal(resumeRequest(jobState).workflowThreadId, 'thread-1');
+  save(jobState, { status: 'running' });
+  assert.throws(() => resumeRequest(jobState), /failed job state/);
+  console.log('PASS explicit managed resume refuses a running job and preserves thread identity');
 } finally { rmSync(root, { recursive: true, force: true }); }
