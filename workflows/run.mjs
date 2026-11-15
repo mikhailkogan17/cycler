@@ -34,6 +34,19 @@ export function stopReason(error, stage) {
 const digest = value => createHash('sha256').update(value).digest('hex');
 function receiptKey(index, label, prompt) { return `${index}:${label}:${digest(prompt).slice(0, 16)}`; }
 function stageState(path) { return path && existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {}; }
+export function equivalentCheckpoint(label, current, previous) {
+  if (!current || !previous) return false;
+  if (label.startsWith('audit:')) return current.clean === true && previous.clean === true
+    && ['unauthorizedPaths', 'scopeCreep', 'secrets', 'contractViolations'].every(k =>
+      (current[k] == null || Array.isArray(current[k]) && current[k].length === 0)
+        && (previous[k] == null || Array.isArray(previous[k]) && previous[k].length === 0));
+  if (label.startsWith('verify-')) {
+    if (!Array.isArray(current.checks) || !Array.isArray(previous.checks) || current.checks.length !== previous.checks.length) return false;
+    return current.checks.every((check, i) => check.passed === true && previous.checks[i].passed === true
+      && check.name === previous.checks[i].name && check.command === previous.checks[i].command);
+  }
+  return false;
+}
 export function resumeRequest(path) {
   const statePath = resolve(path);
   const prior = stageState(statePath);
@@ -123,7 +136,8 @@ export async function runWorkflow(args, { agent: rawInvoke = runAgent, reviewer 
   let replayChain = true;
   const receipts = stageState(args.statePath).stageReceipts || {};
   const saveReceipt = (key, value) => {
-    receipts[key] = { ...value, at: Date.now() };
+    const at = Date.now();
+    receipts[key] = { ...value, at, originalAt: receipts[key]?.originalAt || receipts[key]?.at || at };
     if (args.statePath) patchState(args.statePath, { stageReceipts: receipts });
   };
   const stale = (label, message) => {
@@ -136,7 +150,9 @@ export async function runWorkflow(args, { agent: rawInvoke = runAgent, reviewer 
     const label = opts.label || 'agent';
     const key = receiptKey(index, label, prompt);
     const prior = receipts[key];
-    const isRecordedLaterCommit = head => Object.values(receipts).some(entry => entry.complete && entry.result?.commitHash === head && entry.at > prior?.at);
+    const checkpointCandidate = replayChain && /^(audit:|verify-)/.test(label) && prior?.complete;
+    const isRecordedLaterCommit = head => Object.values(receipts).some(entry => entry.complete && entry.result?.commitHash === head
+      && (entry.originalAt || entry.at) > (prior?.originalAt || prior?.at || 0));
     console.error(`cycler stage: ${opts.label}`);
     if (args.statePath) patchState(args.statePath, { stage: opts.label });
     try {
@@ -149,14 +165,17 @@ export async function runWorkflow(args, { agent: rawInvoke = runAgent, reviewer 
           return prior.result;
         }
       } else if (opts.reviewRequest) {
+        if (!enforce) return prior.result;
         const actual = github(opts.reviewRequest.cwd).pr(opts.reviewRequest.pr).headRefOid;
         if (actual === prior.result?.head || isRecordedLaterCommit(actual)) return prior.result;
         return stale(label, `PR head changed outside recorded workflow after ${label}`);
       } else if (opts.adminRequest?.kind === 'commit') {
+        if (!enforce) return prior.result;
         const actual = (await execute(['git', 'rev-parse', 'HEAD'], { cwd: opts.cwd || cwd })).trim();
         if (actual === prior.result?.commitHash || isRecordedLaterCommit(actual)) return prior.result;
         return stale(label, `Commit head changed outside recorded workflow after ${label}`);
       } else if (opts.adminRequest?.kind === 'pr') {
+        if (!enforce) return prior.result;
         const actual = github(opts.cwd || cwd).pr(prior.result?.prUrl).headRefOid;
         const head = (await execute(['git', 'rev-parse', 'HEAD'], { cwd: opts.cwd || cwd })).trim();
         if (actual === head || isRecordedLaterCommit(head)) return prior.result;
@@ -176,9 +195,9 @@ export async function runWorkflow(args, { agent: rawInvoke = runAgent, reviewer 
       console.error(`${label} resume validation: ${error.message}`);
       return null;
     }
-    // Once any stage actually runs, later receipts belong to an earlier execution chain.
-    // In particular, new human feedback must never reuse an old commit or review receipt.
-    replayChain = false;
+    // Re-running an unchanged audit/verify checkpoint preserves the earlier chain.
+    // New implementation work or changed check evidence invalidates downstream receipts.
+    if (!checkpointCandidate) replayChain = false;
     if (opts.adminRequest && enforce) {
       try {
         if (enforce && !['branch', 'cleanup'].includes(opts.adminRequest.kind)) { assertContract(); assertGate(); }
@@ -309,7 +328,19 @@ export async function runWorkflow(args, { agent: rawInvoke = runAgent, reviewer 
         assertGate = protect([join(tree, '.claude/harness/gate.sh'), join(ROOT, 'harness/gate.sh'), join(ROOT, 'harness/gate.default.sh')]);
       }
       if (enforce && opts.label !== 'followups' && opts.label !== 'cleanup') { assertContract(); assertGate(); }
-      saveReceipt(key, { complete: true, result });
+      const treeFingerprint = enforce && /^(audit:|verify-)/.test(label)
+        ? (await execute(['bash', join(ROOT, 'harness/tree-fingerprint.sh'), opts.cwd || cwd], { cwd: opts.cwd || cwd })).trim() : null;
+      if (checkpointCandidate) {
+        let coveredByLaterCommit = false;
+        if (enforce && treeFingerprint !== prior.treeFingerprint) {
+          const head = (await execute(['git', 'rev-parse', 'HEAD'], { cwd: opts.cwd || cwd })).trim();
+          const status = (await execute(['git', 'status', '--porcelain=v1', '-z'], { cwd: opts.cwd || cwd })).trim();
+          coveredByLaterCommit = !status && isRecordedLaterCommit(head);
+        }
+        replayChain = equivalentCheckpoint(label, result, prior.result)
+          && (!enforce || treeFingerprint === prior.treeFingerprint || coveredByLaterCommit);
+      }
+      saveReceipt(key, { complete: true, result, ...(treeFingerprint ? { treeFingerprint } : {}) });
       return result;
     }
     catch (err) {

@@ -117,4 +117,31 @@ try {
   assert.equal(feedbackCalls.filter(label => label === 'committer:initial').length, 2,
     'new feedback must commit again rather than replaying the old receipt');
   console.log('PASS managed feedback runs a new commit and the next bounded review round');
+
+  const midState = join(root, 'mid-review-state.json'); save(midState, { status: 'running' });
+  const midCalls = []; const midRounds = []; let interrupted = true;
+  const midStub = makeResponder({ auditDirty: [false, false], verifyGreen: [true, true] });
+  const issue = 'a.ts:RIGHT:1: bug: triggers';
+  const midAgent = async request => {
+    midCalls.push(request.label);
+    if (request.label.startsWith('implementer:')) return { status: 'done', initialGitStatus: '', changedFiles: ['a.ts'],
+      summary: 'fixed', commandJournal: [], dispositions: [{ issue, resolution: 'fixed', evidence: 'a.ts:1' }] };
+    return midStub(request.label, request.prompt, {}, []);
+  };
+  const midReviewer = async request => {
+    midRounds.push(request.reviewRound);
+    if (request.reviewRound === 2 && interrupted) { interrupted = false; throw new Error('temporary review API failure'); }
+    return request.reviewRound === 1
+      ? { approved: false, published: true, fatal: false, head: 'a'.repeat(40),
+        confirmed: [{ file: 'a.ts', side: 'RIGHT', line: 1, title: 'bug', description: 'triggers', severity: 'blocking' }],
+        blockingIssues: [issue], threads: [], notes: 'first review' }
+      : { approved: true, published: true, fatal: false, head: 'b'.repeat(40), confirmed: [], blockingIssues: [], threads: [], notes: 'repeat' };
+  };
+  const midArgs = { ...feedbackArgs, statePath: midState };
+  assert.equal((await runWorkflow(midArgs, { enforce: false, agent: midAgent, reviewer: midReviewer })).status, 'blocked');
+  assert.equal((await runWorkflow(midArgs, { enforce: false, agent: midAgent, reviewer: midReviewer })).status, 'done');
+  assert.deepEqual(midRounds, [1, 2, 2], 'earlier review is reused after a later review interruption');
+  assert.equal(midCalls.filter(label => label.startsWith('committer:')).length, 2,
+    'resume does not replay either completed commit');
+  console.log('PASS interrupted second review resumes without replaying prior commit or review side effects');
 } finally { rmSync(root, { recursive: true, force: true }); }
