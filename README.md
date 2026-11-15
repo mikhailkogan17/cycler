@@ -52,9 +52,9 @@ flowchart LR
    claude plugin install cycler@cycler
    ```
 
-2. In Linear, go to **Settings → API → Applications → New application**. Name it `Claude`; set the callback URL to `http://localhost:8787/callback`; leave webhooks off. The authorization flow requests `read`, `write`, `app:assignable`, and `app:mentionable` scopes. Copy its Client ID and Client secret. Use an OAuth application, not a personal API key: the app is the agent that issues can be delegated to.
+2. In Linear, go to **Settings → API → Applications → New application**. Name it `Cycler`; set the callback URL to `http://localhost:8787/callback`; leave webhooks off. The authorization flow requests `read`, `write`, `app:assignable`, and `app:mentionable` scopes. Copy its Client ID and Client secret. Use an OAuth application, not a personal API key: the app is the agent that issues can be delegated to.
 3. Open Claude Code **in the repo that should receive PRs** by running `claude` in its directory. At the Claude Code prompt, enter `/cycler:start`. It guides you through the config, browser authorization, gate check, and launchd setup. The command is safe to rerun.
-4. Delegate an issue to the `Claude` agent in Linear. The poller picks it up within 180 seconds; `/cycler:delegate <KEY>` in Claude Code can dispatch one immediately.
+4. Delegate an issue to the `Cycler` agent in Linear. The poller picks it up within 180 seconds; `/cycler:delegate <KEY>` in Claude Code can dispatch one immediately.
 
 **Access boundary:** anyone who can delegate an issue to this agent can run code on your machine through the dispatched session. Restrict delegation in a shared workspace.
 
