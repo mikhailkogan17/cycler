@@ -52,7 +52,7 @@ await t('gate budget is still enforced (blocks before commit/PR)', async () => {
   assert.strictEqual(result.fixLog.length, 2)
 })
 
-await t('explicit gateFixMax / reviewFixMax override independently', async () => {
+await t('explicit gateFixMax remains independent while reviewFixMax cannot exceed the two-repeat policy', async () => {
   const { result } = await run({
     args: { ...base, gateFixMax: 1, reviewFixMax: 3 },
     responder: makeResponder({
@@ -61,8 +61,9 @@ await t('explicit gateFixMax / reviewFixMax override independently', async () =>
       reviewApproved: [false, false, false, true],
     }),
   })
-  assert.strictEqual(result.status, 'done')
-  assert.strictEqual(result.fixLog.filter((e) => e.stage === 'review').length, 3)
+  assert.strictEqual(result.status, 'blocked')
+  assert.strictEqual(result.reviewFixMax, 2)
+  assert.strictEqual(result.fixLog.filter((e) => e.stage === 'review').length, 2)
 })
 
 process.exit(fails ? 1 : 0)

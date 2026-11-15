@@ -108,13 +108,19 @@ export async function runWorkflow(args, { agent: rawInvoke = runAgent, reviewer 
   // A request runtime is a preference; quota fallback is selected afresh for each stage.
   if (args.statePath) patchState(args.statePath, { preferredRuntime: runtime, stopReason: null });
   const cwd = expand(args.cwd || get(config, 'repo.path') || process.cwd());
+  const savedReviews = stageState(args.statePath).reviewLedger || {};
+  const latestReviewHistory = Object.values(savedReviews).sort((a, b) => b.length - a.length)[0] || [];
+  const continuationRound = args.feedback?.length ? latestReviewHistory.length + 1 : 1;
   const resolved = { ...args, ...(args.contractPath ? { contractPath: resolve(cwd, args.contractPath) } : {}), cwd, config, runtime, pluginRoot: ROOT, githubReview: args.githubReview !== false,
-    prBase: args.prBase || get(config, 'repo.base') || 'main', branchPrefix: args.branchPrefix || get(config, 'repo.branch_prefix') || `${runtime}/` };
+    prBase: args.prBase || get(config, 'repo.base') || 'main', branchPrefix: args.branchPrefix || get(config, 'repo.branch_prefix') || `${runtime}/`,
+    reviewRoundStart: args.reviewRoundStart || continuationRound,
+    previousReview: args.previousReview || (args.feedback?.length ? latestReviewHistory.at(-1)?.result : null) };
   let contract = resolved.contractPath;
   if (enforce && contract && !existsSync(contract)) throw new Error(`Contract missing: ${contract}`);
   let assertContract = contract && enforce ? protect([contract]) : () => {};
   let assertGate = () => {};
   let stageIndex = 0;
+  let replayChain = true;
   const receipts = stageState(args.statePath).stageReceipts || {};
   const saveReceipt = (key, value) => {
     receipts[key] = { ...value, at: Date.now() };
@@ -134,9 +140,10 @@ export async function runWorkflow(args, { agent: rawInvoke = runAgent, reviewer 
     console.error(`cycler stage: ${opts.label}`);
     if (args.statePath) patchState(args.statePath, { stage: opts.label });
     try {
-    if ((enforce || args.resumeReceipts) && prior?.complete && !/^(audit:|verify-)/.test(label)) {
+    if (replayChain && (enforce || args.resumeReceipts) && prior?.complete && !/^(audit:|verify-)/.test(label)) {
       if (opts.adminRequest?.kind === 'branch') {
         const tree = opts.adminRequest.worktree ? join(cwd, '.claude/worktrees', opts.adminRequest.branch.replace(/[^A-Za-z0-9._-]/g, '-')) : cwd;
+        if (!enforce) return prior.result;
         if (opts.adminRequest.worktree && existsSync(tree) && (await execute(['git', 'branch', '--show-current'], { cwd: tree })).trim() === opts.adminRequest.branch) {
           if (enforce) assertGate = protect([join(tree, '.claude/harness/gate.sh'), join(ROOT, 'harness/gate.sh'), join(ROOT, 'harness/gate.default.sh')]);
           return prior.result;
@@ -169,6 +176,9 @@ export async function runWorkflow(args, { agent: rawInvoke = runAgent, reviewer 
       console.error(`${label} resume validation: ${error.message}`);
       return null;
     }
+    // Once any stage actually runs, later receipts belong to an earlier execution chain.
+    // In particular, new human feedback must never reuse an old commit or review receipt.
+    replayChain = false;
     if (opts.adminRequest && enforce) {
       try {
         if (enforce && !['branch', 'cleanup'].includes(opts.adminRequest.kind)) { assertContract(); assertGate(); }

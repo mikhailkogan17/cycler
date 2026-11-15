@@ -93,4 +93,28 @@ try {
   save(jobState, { status: 'running' });
   assert.throws(() => resumeRequest(jobState), /failed job state/);
   console.log('PASS explicit managed resume refuses a running job and preserves thread identity');
+
+  const feedbackState = join(root, 'feedback-state.json'); save(feedbackState, { status: 'running' });
+  const feedbackCalls = []; const reviewRounds = [];
+  const feedbackStub = makeResponder({ auditDirty: [false, false], verifyGreen: [true, true] });
+  const feedbackAgent = async request => {
+    feedbackCalls.push(request.label);
+    return feedbackStub(request.label, request.prompt, {}, []);
+  };
+  const feedbackReviewer = async request => {
+    reviewRounds.push(request.reviewRound);
+    return { approved: true, published: true, fatal: false, head: (reviewRounds.length === 1 ? 'a' : 'b').repeat(40),
+      confirmed: [], blockingIssues: [], threads: [], notes: 'fixture review' };
+  };
+  const feedbackArgs = { cwd: source, task: 'fixture feedback', contractPath: join(root, 'contract.md'), runtime: 'codex',
+    config: {}, statePath: feedbackState, githubReview: true, resumeReceipts: true, linear: false };
+  const beforeFeedback = await runWorkflow(feedbackArgs, { enforce: false, agent: feedbackAgent, reviewer: feedbackReviewer });
+  assert.equal(beforeFeedback.status, 'done');
+  const afterFeedback = await runWorkflow({ ...feedbackArgs, feedback: ['Human follow-up'] },
+    { enforce: false, agent: feedbackAgent, reviewer: feedbackReviewer });
+  assert.equal(afterFeedback.status, 'done');
+  assert.deepEqual(reviewRounds, [1, 2], 'feedback uses the next review slot');
+  assert.equal(feedbackCalls.filter(label => label === 'committer:initial').length, 2,
+    'new feedback must commit again rather than replaying the old receipt');
+  console.log('PASS managed feedback runs a new commit and the next bounded review round');
 } finally { rmSync(root, { recursive: true, force: true }); }

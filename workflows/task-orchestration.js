@@ -199,7 +199,7 @@ const fixMax = args?.fixMax ?? 2
 // `fixLog.length >= fixMax` on the review loop's first iteration — a published, never-fixable PR plus a
 // `blocked` result. Each loop now counts only its own rounds.
 const gateFixMax = args?.gateFixMax ?? fixMax
-const reviewFixMax = args?.reviewFixMax ?? fixMax
+const reviewFixMax = Math.max(0, Math.min(args?.reviewFixMax ?? fixMax, 3 - (args?.reviewRoundStart || 1)))
 const prBase = args?.prBase || 'main'                       // config: repo.base
 const branchPrefix = args?.branchPrefix || 'claude/'        // config: repo.branch_prefix
 // APL-36: Linear write-back. Off automatically when the run has no Linear issue key; force off with
@@ -959,7 +959,9 @@ Return structured output only.`,
   return result
 }
 
-impl = await runImplement(args.feedback || null)
+const priorReviewIssues = (args?.previousReview?.confirmed || []).map(f => `${f.file}:${f.side}:${f.line}: ${f.title}: ${f.description}`)
+const initialFeedback = [...(Array.isArray(args.feedback) ? args.feedback : args.feedback ? [args.feedback] : []), ...priorReviewIssues]
+impl = await runImplement(initialFeedback.length ? initialFeedback : null, args.githubReview === true && priorReviewIssues.length > 0)
 if (!impl || impl.status === 'blocked') {
   return await blocked({
     status: 'blocked', stage: 'implement',
@@ -1519,9 +1521,9 @@ if (!noCommit && budgetExhausted()) {
   // APL-42: the fix diff for round N is <the commit reviewed in round N-1>..HEAD. Tracking the hash here
   // (rather than asking an agent to work the range out) keeps the scoping deterministic; if a commit
   // stage ever fails to report a hash, `scoped` falls back to the full branch diff and says so.
-  let reviewRound = 1
+  let reviewRound = args?.reviewRoundStart || 1
   let lastReviewedCommit = commit?.commitHash || ''
-  reviewRes = await runReview(reviewRound, '', [])
+  reviewRes = await runReview(reviewRound, '', [], args?.previousReview || null)
   if (reviewRes.fatal) {
     return await blocked({ status: 'blocked', stage: 'review', fatal: true, blockedReason: reviewRes.fatalReason, fixLog, pr, commits: commitLog, reviewCoverage })
   }
