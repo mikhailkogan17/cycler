@@ -1,0 +1,8 @@
+node_modules/
+out/*
+!out/.gitkeep
+.work/
+*.webm
+*.cast
+*.jsonl
+storage-state.json

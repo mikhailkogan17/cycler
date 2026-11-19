@@ -22,7 +22,15 @@
 
 ---
 
-<!-- DEMO: 2-min video/GIF -->
+<!-- DEMO -->
+
+![Cycler demo: Linear issue to a gated PR](docs/assets/cycler-demo.gif)
+
+[Watch the 1080p MP4](https://github.com/mikhailkogan17/cycler/releases/latest/download/cycler-demo.mp4)
+
+**How this demo is made:** [`demo/run.sh`](demo/README.md) creates a disposable public sandbox and a real Linear issue.<br>
+It records the local Cycler run, the green repository gate and the open PR.<br>
+The [capture procedure](demo/README.md) measures elapsed time from events and cleans up the demo issue and PR.
 <!-- Real PR produced by cycler: https://github.com/mikhailkogan17/cycler/pull/40 -->
 
 ## What it does
