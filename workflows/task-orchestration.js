@@ -199,7 +199,7 @@ const fixMax = args?.fixMax ?? 2
 // `fixLog.length >= fixMax` on the review loop's first iteration — a published, never-fixable PR plus a
 // `blocked` result. Each loop now counts only its own rounds.
 const gateFixMax = args?.gateFixMax ?? fixMax
-const reviewFixMax = args?.reviewFixMax ?? fixMax
+const reviewFixMax = Math.max(0, Math.min(args?.reviewFixMax ?? fixMax, 3 - (args?.reviewRoundStart || 1)))
 const prBase = args?.prBase || 'main'                       // config: repo.base
 const branchPrefix = args?.branchPrefix || 'claude/'        // config: repo.branch_prefix
 // APL-36: Linear write-back. Off automatically when the run has no Linear issue key; force off with
@@ -307,6 +307,9 @@ const IMPLEMENTER_SCHEMA = {
     summary: { type: 'string' },
     commandJournal: { type: 'array', items: { type: 'string' } },
     blockedReason: { type: 'string' },
+    dispositions: { type: 'array', items: { type: 'object', required: ['issue', 'resolution', 'evidence'], properties: {
+      issue: { type: 'string' }, resolution: { type: 'string' }, evidence: { type: 'string' },
+    } } },
   },
   required: ['status', 'initialGitStatus', 'changedFiles', 'summary', 'commandJournal'],
 }
@@ -412,6 +415,7 @@ const BRANCH_SCHEMA = {
     // it this run's job to remove it. Absent in worktree mode, where git's own "branch already checked
     // out" refusal is the lock and there is nothing to release.
     lockTaken: { type: 'boolean' },
+    baselinePaths: { type: 'array', items: { type: 'string' } },
   },
   required: ['branch', 'ok'],
 }
@@ -543,7 +547,7 @@ ${steps.join('\n')}
 
 Report what actually happened. If a command fails, report the failure verbatim — do not retry in a loop
 and do not work around it.`,
-    { ...(args.runtime ? { cwd: repoRoot } : {}), schema: CLEANUP_SCHEMA, label: 'cleanup', phase: 'Cleanup', model: modelFor('cleanup') }
+    { ...(args.runtime ? { cwd: repoRoot, adminRequest: { kind: 'cleanup', repoRoot, worktree: activeWorktree, lock: lockHeld ? sharedLockPath : null, removeWorktree } } : {}), schema: CLEANUP_SCHEMA, label: 'cleanup', phase: 'Cleanup', model: modelFor('cleanup') }
   )
   // APL-7 discipline: a null result means cleanup never ran. Say so rather than reporting it as released.
   if (!res) {
@@ -815,7 +819,7 @@ If you took the lock but then have to return ok:false for any later reason, REMO
 (rm -rf "${sharedLockPath}") before returning — a failed run must not leave the tree locked.
 
 Return ok:true ONLY if HEAD is verifiably on "${taskBranch}". Otherwise ok:false with a concrete error.`,
-  { ...(args.runtime ? { cwd: runCwd } : {}), schema: BRANCH_SCHEMA, label: `branch:${taskBranch}`, phase: 'Branch', model: modelFor('branch') }
+  { ...(args.runtime ? { cwd: runCwd, adminRequest: { kind: 'branch', branch: taskBranch, base: prBase, worktree: useWorktree } } : {}), schema: BRANCH_SCHEMA, label: `branch:${taskBranch}`, phase: 'Branch', model: modelFor('branch') }
 )
 
 // APL-45: record what we are holding BEFORE the failure check, so a branch stage that took the lock and
@@ -906,7 +910,7 @@ const reviewRounds = () => fixLog.filter((e) => e.stage === 'review').length
 let impl = null
 let baseline = ''
 
-async function runImplement(feedback) {
+async function runImplement(feedback, reviewFindings = false) {
   phase('Implement')
   const round = fixLog.length + 1
   const feedbackBlock = feedback && feedback.length
@@ -914,6 +918,7 @@ async function runImplement(feedback) {
 existing task diff (already committed rounds stay committed; make a fresh fix on top). Do not touch anything
 unrelated and do not reintroduce already-fixed issues:
 ${feedback.map((i) => `- ${i}`).join('\n')}
+${reviewFindings ? '\nFor EVERY listed review finding, return a dispositions entry with the exact issue text, resolution (fixed or evidence-based rejected), and concrete file/test evidence. Do not leave a nonblocking finding unanswered.\n' : ''}
 
 `
     : ''
@@ -923,7 +928,7 @@ touch or report them): ${JSON.stringify(baseline)}
 
 `
     : ''
-  return agent(
+  const result = await agent(
     `You are the IMPLEMENTER in a strict harness. Repo working dir: ${runCwd}. Task contract: ${contract} (READ IT FIRST).
 
 ${baselineBlock}${feedbackBlock}0. FIRST, before any change: run 'git status --short'. ${
@@ -946,9 +951,17 @@ If you cannot complete, return status "blocked" with a concrete blockedReason.
 Return structured output only.`,
     { ...(args.runtime ? { cwd: runCwd } : {}), schema: IMPLEMENTER_SCHEMA, label: feedback ? `implementer:round-${round}` : 'implementer', phase: 'Implement', model: modelFor('implement') }
   )
+  if (args.runtime && reviewFindings && result?.status === 'done') {
+    const dispositions = result.dispositions || []
+    if (dispositions.length !== feedback.length || feedback.some(issue => !dispositions.some(d => d.issue === issue && d.resolution && d.evidence)))
+      return { ...result, status: 'blocked', blockedReason: 'Review batch is incomplete: every finding needs a concrete disposition before repeat review' }
+  }
+  return result
 }
 
-impl = await runImplement(args.feedback || null)
+const priorReviewIssues = (args?.previousReview?.confirmed || []).map(f => `${f.file}:${f.side}:${f.line}: ${f.title}: ${f.description}`)
+const initialFeedback = [...(Array.isArray(args.feedback) ? args.feedback : args.feedback ? [args.feedback] : []), ...priorReviewIssues]
+impl = await runImplement(initialFeedback.length ? initialFeedback : null, args.githubReview === true && priorReviewIssues.length > 0)
 if (!impl || impl.status === 'blocked') {
   return await blocked({
     status: 'blocked', stage: 'implement',
@@ -1156,11 +1169,12 @@ async function replyToReview(result, commitHash) {
   return response?.replied === true
 }
 
-async function runReview(reviewRound, sinceCommit, liveLenses) {
+async function runReview(reviewRound, sinceCommit, liveLenses, previousReview = null) {
   phase('Review')
   // The same harness serves native Workflow sessions, portable runtimes and standalone reviews.
   if (args.githubReview === true) {
-    const payload = { cwd: runCwd, pr: pr?.prUrl, contract, runtime: args.runtime || 'claude' }
+    const payload = { cwd: runCwd, pr: pr?.prUrl, contract, runtime: args.runtime || 'claude', reviewRound,
+      previousReview: previousReview && { head: previousReview.head, confirmed: previousReview.confirmed, threads: previousReview.threads } }
     const result = await agent(
       `Run the independent GitHub review harness. Do not review the code yourself. Execute:\n` +
       `node ${shellQuote(PLUGIN_ROOT + '/harness/review.mjs')} --cwd ${shellQuote(runCwd)} --pr ${shellQuote(pr?.prUrl || '')} --contract ${shellQuote(contract)} --publish\n` +
@@ -1170,8 +1184,10 @@ async function runReview(reviewRound, sinceCommit, liveLenses) {
     if (!result || result.fatal || typeof result.approved !== 'boolean' || result.published !== true) {
       return { approved: false, fatal: true, fatalReason: result?.fatalReason || 'Independent GitHub review was not published' }
     }
-    reviewCoverage.push({ round: reviewRound, lensesRun: ['bugs', 'contract', 'test-gaps'], lensesSkipped: [], diffScope: result.head, reason: 'independent GitHub review of the complete PR head' })
-    return result
+    reviewCoverage.push({ round: reviewRound, lensesRun: ['comprehensive'], lensesSkipped: [], diffScope: result.head, reason: 'independent GitHub review of the complete PR head' })
+    // Every finding receives a batch disposition before another review, including nonblocking ones.
+    const issues = (result.confirmed || []).map(f => `${f.file}:${f.side}:${f.line}: ${f.title}: ${f.description}`)
+    return { ...result, approved: result.approved && issues.length === 0, blockingIssues: issues }
   }
   const DIMENSIONS = [
     { key: 'bugs', prompt: 'Hunt for REAL bugs and logic errors in the diff. Only report issues you can point to a concrete line for.' },
@@ -1439,7 +1455,7 @@ async function commitStage(label) {
 4. Push: git push -u origin HEAD  (a failed push is a failure — report it).
 
 Return commitHash + committedFiles + message + pushed (pushed = true ONLY if the push succeeded).`,
-    { ...(args.runtime ? { cwd: runCwd } : {}), schema: COMMIT_SCHEMA, label: 'committer:' + label, phase: 'Commit', model: modelFor('commit') }
+    { ...(args.runtime ? { cwd: runCwd, adminRequest: { kind: 'commit', files: [...taskFiles], issueId, runtime: args.runtime, commitLabel: label, baselinePaths: branchRes.baselinePaths || [] } } : {}), schema: COMMIT_SCHEMA, label: 'committer:' + label, phase: 'Commit', model: modelFor('commit') }
   )
 }
 
@@ -1458,7 +1474,7 @@ The task's changes are committed and pushed on the current branch.
    diff is reviewable; the PR can be opened manually.
 
 Return prUrl + prNumber (+ note if any).`,
-    { ...(args.runtime ? { cwd: runCwd } : {}), schema: PR_SCHEMA, label: 'pr-opener', phase: 'PR', model: modelFor('pr') }
+    { ...(args.runtime ? { cwd: runCwd, adminRequest: { kind: 'pr', base: prBase, contract, issueId } } : {}), schema: PR_SCHEMA, label: 'pr-opener', phase: 'PR', model: modelFor('pr') }
   )
 }
 
@@ -1505,9 +1521,9 @@ if (!noCommit && budgetExhausted()) {
   // APL-42: the fix diff for round N is <the commit reviewed in round N-1>..HEAD. Tracking the hash here
   // (rather than asking an agent to work the range out) keeps the scoping deterministic; if a commit
   // stage ever fails to report a hash, `scoped` falls back to the full branch diff and says so.
-  let reviewRound = 1
+  let reviewRound = args?.reviewRoundStart || 1
   let lastReviewedCommit = commit?.commitHash || ''
-  reviewRes = await runReview(reviewRound, '', [])
+  reviewRes = await runReview(reviewRound, '', [], args?.previousReview || null)
   if (reviewRes.fatal) {
     return await blocked({ status: 'blocked', stage: 'review', fatal: true, blockedReason: reviewRes.fatalReason, fixLog, pr, commits: commitLog, reviewCoverage })
   }
@@ -1520,7 +1536,7 @@ if (!noCommit && budgetExhausted()) {
       exhausted = true
       break
     }
-    impl = await runImplement(reviewRes.blockingIssues)
+    impl = await runImplement(reviewRes.blockingIssues, args.githubReview === true)
     if (!impl || impl.status === 'blocked') {
       return await blocked({ status: 'blocked', stage: 'implement', blockedReason: impl?.blockedReason || 'implementer failed on review fix round', fixLog, pr })
     }
@@ -1535,7 +1551,7 @@ if (!noCommit && budgetExhausted()) {
     reviewRound += 1
     const sinceCommit = lastReviewedCommit
     lastReviewedCommit = fixCommit.commitHash || lastReviewedCommit
-    reviewRes = await runReview(reviewRound, sinceCommit, reviewRes.liveLenses || [])
+    reviewRes = await runReview(reviewRound, sinceCommit, reviewRes.liveLenses || [], reviewRes)
     if (reviewRes.fatal) {
       return await blocked({ status: 'blocked', stage: 'review', fatal: true, blockedReason: reviewRes.fatalReason, fixLog, pr, commits: commitLog, reviewCoverage })
     }
@@ -1646,7 +1662,7 @@ return {
   // 'no-pr' is a real outcome (noCommit, or `gh` unavailable) — not a silent success.
   terminal: terminalState(pr),
   unattended,
-  approved: true,
+  approved: reviewRes?.approved === true && !noCommit,
   contractPath: contract,
   branch: taskBranch,
   branchCreated: branchRes.created === true,
