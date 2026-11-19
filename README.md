@@ -103,8 +103,9 @@ Claude Code plugin rather than a service you deploy and keep alive.
 | `/cycler:workflow-review` | review an existing GitHub PR independently of Linear and implementation; publish validated inline comments |
 
 > [!IMPORTANT]
-> The poller selects a configured task or research workflow for delegated issues. You can also run
-> workflows in the **current** session; `workflow-review` reviews an existing PR directly.
+> The poller selects a configured task or research workflow for delegated issues. The workflow runs
+> inside the dispatched session. You can also run workflows in the **current** session;
+> `workflow-review` reviews an existing PR directly.
 
 #### Codex, DeepSeek Harness, and standalone review
 
